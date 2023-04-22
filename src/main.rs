@@ -66,10 +66,10 @@ const MAX_FRAMES_IN_FLIGHT: usize = 2;
 lazy_static! {
     #[rustfmt::skip]
     static ref VERTICES: Vec<Vertex> = vec![
-        Vertex::new(glm::vec3(100.0, 100.0, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
-        Vertex::new(glm::vec3(500.0, 100.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
+        Vertex::new(glm::vec3(0.0, 0.0, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
+        Vertex::new(glm::vec3(500.0, 0.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
         Vertex::new(glm::vec3(500.0, 500.0, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
-        Vertex::new(glm::vec3(100.0, 900.0, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
+        Vertex::new(glm::vec3(0.0, 500.0, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
         //
         Vertex::new(glm::vec3(100.0, 100.0, 0.0), glm::vec3(1.0, 0.0, 0.0), glm::vec2(1.0, 0.0)),
         Vertex::new(glm::vec3(500.0, 100.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
@@ -81,8 +81,6 @@ lazy_static! {
 #[rustfmt::skip]
 const INDICES: &[u16] = &[
     0, 1, 2, 2, 3, 0,
-    //
-    4, 5, 6, 6, 7, 4
 ];
 
 #[rustfmt::skip]
@@ -300,10 +298,15 @@ impl App {
 
         let model = glm::identity();
 
-        let view = glm::look_at(
+        // let view = glm::look_at(
+        //     &glm::vec3(0.0, 0.0, -1.0),
+        //     &glm::vec3(0.0, 0.0, 0.0),
+        //     &glm::vec3(0.0, 1.0, 0.0),
+        // );
+
+        let view = glm::translate(
+            &glm::identity(),
             &glm::vec3(0.0, 0.0, -1.0),
-            &glm::vec3(0.0, 0.0, 0.0),
-            &glm::vec3(0.0, -1.0, 0.0),
         );
 
         let mut proj = glm::perspective(
@@ -321,11 +324,9 @@ impl App {
         // );
 
         proj = glm::ortho_rh_zo(
-            0.0, self.data.swapchain_extent.width as f32, self.data.swapchain_extent.height as f32, 0.0, 0.1, // This sets the depth range from [0, 1] to [-1, 1].
+            0.0, self.data.swapchain_extent.width as f32, 0.0, self.data.swapchain_extent.height as f32, 0.001, // This sets the depth range from [0, 1] to [-1, 1].
             10.0,
         );
-
-        proj[(1, 1)] *= -1.0;
 
         let ubo = UniformBufferObject { model, view, proj };
 
@@ -1007,7 +1008,7 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
         .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+        .front_face(vk::FrontFace::CLOCKWISE)
         .depth_bias_enable(true);
 
     // Multisample State
