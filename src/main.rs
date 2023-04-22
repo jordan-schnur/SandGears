@@ -47,18 +47,34 @@ const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 /// The maximum number of frames that can be processed concurrently.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
+// lazy_static! {
+//     #[rustfmt::skip]
+//     static ref VERTICES: Vec<Vertex> = vec![
+//         Vertex::new(glm::vec3(-0.5, -0.5, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
+//         Vertex::new(glm::vec3(0.5, -0.5, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
+//         Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
+//         Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
+//         //
+//         Vertex::new(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(1.0, 0.0, 0.0), glm::vec2(1.0, 0.0)),
+//         Vertex::new(glm::vec3(0.5, -0.5, -0.5), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
+//         Vertex::new(glm::vec3(0.5, 0.5, -0.5), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
+//         Vertex::new(glm::vec3(-0.5, 0.5, -0.5), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
+//     ];
+// }
+
+
 lazy_static! {
     #[rustfmt::skip]
     static ref VERTICES: Vec<Vertex> = vec![
-        Vertex::new(glm::vec3(-0.5, -0.5, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
-        Vertex::new(glm::vec3(0.5, -0.5, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
-        Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
-        Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
+        Vertex::new(glm::vec3(100.0, 100.0, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
+        Vertex::new(glm::vec3(500.0, 100.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
+        Vertex::new(glm::vec3(500.0, 500.0, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
+        Vertex::new(glm::vec3(100.0, 900.0, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
         //
-        Vertex::new(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(1.0, 0.0, 0.0), glm::vec2(1.0, 0.0)),
-        Vertex::new(glm::vec3(0.5, -0.5, -0.5), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
-        Vertex::new(glm::vec3(0.5, 0.5, -0.5), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
-        Vertex::new(glm::vec3(-0.5, 0.5, -0.5), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
+        Vertex::new(glm::vec3(100.0, 100.0, 0.0), glm::vec3(1.0, 0.0, 0.0), glm::vec2(1.0, 0.0)),
+        Vertex::new(glm::vec3(500.0, 100.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
+        Vertex::new(glm::vec3(500.0, 500.0, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
+        Vertex::new(glm::vec3(100.0, 500.0, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
     ];
 }
 
@@ -235,40 +251,81 @@ impl App {
     unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
         // MVP
 
+        // let time = self.start.elapsed().as_secs_f32();
+        //
+        // let model = glm::identity();
+        //
+        // // let model = glm::scale(&glm::identity(), &glm::vec3(100.0, 100.0, 1.0));
+        //
+        // let view = glm::look_at(
+        //     &glm::vec3(2.0, 2.0, 2.0),
+        //     &glm::vec3(0.0, 0.0, 0.0),
+        //     &glm::vec3(0.0, 0.0, 1.0),
+        // );
+        //
+        // let view = glm::identity();
+        //
+        // // let proj = glm::ortho_rh_zo(
+        // //     0.0,
+        // //     self.data.swapchain_extent.width as f32,
+        // //     self.data.swapchain_extent.height as f32,
+        // //     0.0,
+        // //     0.1,
+        // //     2.0,
+        // // );
+        //
+        // let mut proj = glm::perspective_rh_zo(
+        //     self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
+        //     glm::radians(&glm::vec1(45.0))[0],
+        //     0.1,
+        //     10.0,
+        // );
+        //
+        // proj[(1, 1)] *= -1.0;
+        //
+        // // let mut proj = glm::ortho_rh_zo(
+        // //     0.0, self.data.swapchain_extent.width as f32, self.data.swapchain_extent.height as f32, 0.0, 0.1, // This sets the depth range from [0, 1] to [-1, 1].
+        // //     21.0,
+        // // );
+        //
+        // let ubo = UniformBufferObject { model, view, proj };
+
         let time = self.start.elapsed().as_secs_f32();
 
-        // let model = glm::identity();
-
-        let model = glm::scale(&glm::identity(), &glm::vec3(100.0, 1.0, 100.0));
-
-        let view = glm::look_at(
-            &glm::vec3(2.0, 2.0, 2.0),
-            &glm::vec3(0.0, 0.0, 0.0),
+        let model = glm::rotate(
+            &glm::identity(),
+            time * glm::radians(&glm::vec1(90.0))[0],
             &glm::vec3(0.0, 0.0, 1.0),
         );
 
-        // let proj = glm::ortho_rh_zo(
-        //     0.0,
-        //     self.data.swapchain_extent.width as f32,
-        //     self.data.swapchain_extent.height as f32,
-        //     0.0,
+        let model = glm::identity();
+
+        let view = glm::look_at(
+            &glm::vec3(0.0, 0.0, -1.0),
+            &glm::vec3(0.0, 0.0, 0.0),
+            &glm::vec3(0.0, -1.0, 0.0),
+        );
+
+        let mut proj = glm::perspective(
+                self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
+                glm::radians(&glm::vec1(45.0))[0],
+                0.1,
+                10.0,
+            );
+
+        // let mut proj = glm::perspective_rh_zo(
+        //     self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
+        //     glm::radians(&glm::vec1(45.0))[0],
         //     0.1,
-        //     2.0,
+        //     10.0,
         // );
 
-        let mut proj = glm::perspective_rh_zo(
-            self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
-            glm::radians(&glm::vec1(45.0))[0],
-            0.1,
+        proj = glm::ortho_rh_zo(
+            0.0, self.data.swapchain_extent.width as f32, self.data.swapchain_extent.height as f32, 0.0, 0.1, // This sets the depth range from [0, 1] to [-1, 1].
             10.0,
         );
 
         proj[(1, 1)] *= -1.0;
-
-        let mut proj = glm::ortho_rh_zo(
-            -1.0, 1.0, -1.0, 1.0, 0.1, // This sets the depth range from [0, 1] to [-1, 1].
-            21.0,
-        );
 
         let ubo = UniformBufferObject { model, view, proj };
 
