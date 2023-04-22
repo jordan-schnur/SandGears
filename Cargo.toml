@@ -1,0 +1,25 @@
+[package]
+name = "sandgears"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Error handling
+anyhow = "1"
+# used to store static data like vertices
+lazy_static = "1"
+# used for logging statements
+log = "0.4"
+# Replacement for GLM
+nalgebra-glm = "0.18"
+# used to load PNGs as textures
+png = "0.17"
+# used to print our logs to console
+pretty_env_logger = "0.4"
+# used to define custom error types without boilerplate
+thiserror = "1"
+# used to load 3d .obj models
+tobj = { version = "3", features = ["log"] }
+# used to create a window to render to
+vulkanalia = { version = "=0.18.0", features = ["libloading", "provisional", "window"] }
+winit = "0.28"
