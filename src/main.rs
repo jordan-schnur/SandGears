@@ -67,9 +67,9 @@ lazy_static! {
     #[rustfmt::skip]
     static ref VERTICES: Vec<Vertex> = vec![
         Vertex::new(glm::vec3(0.0, 0.0, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
-        Vertex::new(glm::vec3(500.0, 0.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
-        Vertex::new(glm::vec3(500.0, 500.0, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
-        Vertex::new(glm::vec3(0.0, 500.0, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
+        Vertex::new(glm::vec3(1.0, 0.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
+        Vertex::new(glm::vec3(1.0, 1.0, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
+        Vertex::new(glm::vec3(0.0, 1.0, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
         //
         Vertex::new(glm::vec3(100.0, 100.0, 0.0), glm::vec3(1.0, 0.0, 0.0), glm::vec2(1.0, 0.0)),
         Vertex::new(glm::vec3(500.0, 100.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
@@ -298,12 +298,6 @@ impl App {
 
         let model = glm::identity();
 
-        // let view = glm::look_at(
-        //     &glm::vec3(0.0, 0.0, -1.0),
-        //     &glm::vec3(0.0, 0.0, 0.0),
-        //     &glm::vec3(0.0, 1.0, 0.0),
-        // );
-
         let view = glm::translate(
             &glm::identity(),
             &glm::vec3(0.0, 0.0, -1.0),
@@ -315,6 +309,12 @@ impl App {
                 0.1,
                 10.0,
             );
+
+        let mut abc = [glm::Vec2::new(0.0, 0.0); 100];
+
+        for i in 0..100 {
+            abc[i] = glm::vec2(20.0 + i as f32, 20.0 + i as f32);
+        }
 
         // let mut proj = glm::perspective_rh_zo(
         //     self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
@@ -328,8 +328,7 @@ impl App {
             10.0,
         );
 
-        let ubo = UniformBufferObject { model, view, proj };
-
+         let ubo = UniformBufferObject { model, view, proj };
         // Copy
 
         let memory = self.device.map_memory(
@@ -457,6 +456,9 @@ struct AppData {
     index_buffer_memory: vk::DeviceMemory,
     uniform_buffers: Vec<vk::Buffer>,
     uniform_buffers_memory: Vec<vk::DeviceMemory>,
+    uniform_particle_buffers: Vec<vk::Buffer>,
+    particle_positions: Vec<glm::Vec2>,
+    uniform_particle_buffers_memory: Vec<vk::DeviceMemory>,
     // Descriptors
     descriptor_pool: vk::DescriptorPool,
     descriptor_sets: Vec<vk::DescriptorSet>,
@@ -467,6 +469,13 @@ struct AppData {
     render_finished_semaphores: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
     images_in_flight: Vec<vk::Fence>,
+}
+
+struct InstanceBuffer {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    size: usize,
+    descriptor: vk::DescriptorBufferInfo,
 }
 
 //================================================
@@ -491,8 +500,6 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
         .map(|l| l.layer_name)
         .collect::<HashSet<_>>();
 
-    warn!("{:?}", available_layers);
-
     if VALIDATION_ENABLED && !available_layers.contains(&VALIDATION_LAYER) {
         return Err(anyhow!("Validation layer requested but not supported."));
     }
@@ -511,8 +518,8 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
 
     // layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_LUNARG_api_dump").as_ptr());
     // VK_LAYER_KHRONOS_profiles
-    layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_profiles").as_ptr());
-    layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_synchronization2").as_ptr());
+    // layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_profiles").as_ptr());
+    // layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_synchronization2").as_ptr());
     // Extensions
 
     let mut extensions = vk_window::get_required_instance_extensions(window)
@@ -1596,7 +1603,7 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
             &[data.descriptor_sets[i]],
             &[],
         );
-        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, 1, 0, 0, 0);
+        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, 100, 0, 0, 0);
         device.cmd_end_render_pass(*command_buffer);
 
         device.end_command_buffer(*command_buffer)?;
