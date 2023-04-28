@@ -1,5 +1,10 @@
 #version 450
 
+// Particle positions storage buffer
+layout(binding = 2) buffer ParticleBuffer {
+    vec2 particle_positions[];
+};
+
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
@@ -14,9 +19,8 @@ layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec2 fragTexCoord;
 
 void main() {
-    vec2 position = vec2(0.0, 0.0);
-
-    gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition.x+position.x, inPosition.y+position.y, 0.0, 1.0);
+    vec2 particlePosition = particle_positions[gl_InstanceIndex];
+    gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition.x+particlePosition.x, inPosition.y + particlePosition.y, 0.0, 1.0);
     fragColor = inColor;
     fragTexCoord = inTexCoord;
 }

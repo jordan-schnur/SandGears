@@ -7,18 +7,20 @@
     clippy::unnecessary_wraps
 )]
 
+use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::fs::File;
 use std::mem::size_of;
 use std::os::raw::c_void;
-use std::ptr::copy_nonoverlapping as memcpy;
+use std::ptr::{copy_nonoverlapping as memcpy, copy_nonoverlapping};
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use log::*;
 use nalgebra_glm as glm;
+use nalgebra_glm::{sin, Vec2, vec2};
 use thiserror::Error;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::prelude::v1_0::*;
@@ -29,7 +31,7 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
 
-use vulkanalia::vk::ExtDebugUtilsExtension;
+use vulkanalia::vk::{ExtDebugUtilsExtension};
 use vulkanalia::vk::KhrSurfaceExtension;
 use vulkanalia::vk::KhrSwapchainExtension;
 
@@ -62,6 +64,7 @@ const MAX_FRAMES_IN_FLIGHT: usize = 2;
 //     ];
 // }
 
+const MAX_PARTICLE_COUNT: usize = 10000;
 
 lazy_static! {
     #[rustfmt::skip]
@@ -107,6 +110,7 @@ fn main() -> Result<()> {
             Event::MainEventsCleared if !destroying && !minimized => unsafe { app.render(&window) }.unwrap(),
             // Mark the window as having been resized.
             Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                warn!("{:?}", size);
                 if size.width == 0 || size.height == 0 {
                     minimized = true;
                 } else {
@@ -158,8 +162,10 @@ impl App {
         create_texture_image(&instance, &device, &mut data)?;
         create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
+        create_storage_buffer(&device, &instance, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
+        setup_particles(&mut data);
         create_uniform_buffers(&instance, &device, &mut data)?;
         create_descriptor_pool(&device, &mut data)?;
         create_descriptor_sets(&device, &mut data)?;
@@ -206,6 +212,8 @@ impl App {
 
         self.update_uniform_buffer(image_index)?;
 
+        self.update_particles(image_index)?;
+
         let wait_semaphores = &[self.data.image_available_semaphores[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let command_buffers = &[self.data.command_buffers[image_index]];
@@ -241,6 +249,35 @@ impl App {
         }
 
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+        Ok(())
+    }
+
+    unsafe fn update_particles(&mut self, image_index: usize) -> Result<()> {
+        let active_particle_count: usize = self.data.particles.len();
+
+        let time = self.start.elapsed().as_secs_f32();
+
+        const GRAVITY: f32 = 0.25;
+        for particle in &mut self.data.particles {
+            particle.position.y += GRAVITY * time;
+        }
+
+        let mut data_ptr = self.device.map_memory(
+            self.data.storage_buffer_memory,
+            0,
+            (std::mem::size_of::<Vec2>() * active_particle_count) as u64,
+            vk::MemoryMapFlags::empty()
+        )?;
+
+        let mut positions: Vec<Vec2> = self.data.particles
+            .iter()
+            .map(|particle| particle.position)
+            .collect();
+
+        std::ptr::copy_nonoverlapping(positions.as_ptr(), data_ptr.cast::<Vec2>(), active_particle_count);
+
+        self.device.unmap_memory(self.data.storage_buffer_memory);
 
         Ok(())
     }
@@ -310,12 +347,6 @@ impl App {
                 10.0,
             );
 
-        let mut abc = [glm::Vec2::new(0.0, 0.0); 100];
-
-        for i in 0..100 {
-            abc[i] = glm::vec2(20.0 + i as f32, 20.0 + i as f32);
-        }
-
         // let mut proj = glm::perspective_rh_zo(
         //     self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
         //     glm::radians(&glm::vec1(45.0))[0],
@@ -327,6 +358,8 @@ impl App {
             0.0, self.data.swapchain_extent.width as f32, 0.0, self.data.swapchain_extent.height as f32, 0.001, // This sets the depth range from [0, 1] to [-1, 1].
             10.0,
         );
+
+
 
          let ubo = UniformBufferObject { model, view, proj };
         // Copy
@@ -372,6 +405,8 @@ impl App {
 
         self.destroy_swapchain();
 
+        self.device.free_memory(self.data.storage_buffer_memory, None);
+        self.device.destroy_buffer(self.data.storage_buffer, None);
         self.data.in_flight_fences.iter().for_each(|f| self.device.destroy_fence(*f, None));
         self.data.render_finished_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
         self.data.image_available_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
@@ -411,6 +446,14 @@ impl App {
         self.device.destroy_render_pass(self.data.render_pass, None);
         self.data.swapchain_image_views.iter().for_each(|v| self.device.destroy_image_view(*v, None));
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
+    }
+}
+
+fn setup_particles(data: &mut AppData) {
+    for i in 0..500 {
+        data.particles.push(Particle {
+            position: vec2(i as f32, (i as f32)),
+        });
     }
 }
 
@@ -457,7 +500,6 @@ struct AppData {
     uniform_buffers: Vec<vk::Buffer>,
     uniform_buffers_memory: Vec<vk::DeviceMemory>,
     uniform_particle_buffers: Vec<vk::Buffer>,
-    particle_positions: Vec<glm::Vec2>,
     uniform_particle_buffers_memory: Vec<vk::DeviceMemory>,
     // Descriptors
     descriptor_pool: vk::DescriptorPool,
@@ -469,6 +511,9 @@ struct AppData {
     render_finished_semaphores: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
     images_in_flight: Vec<vk::Fence>,
+    storage_buffer: vk::Buffer,
+    storage_buffer_memory: vk::DeviceMemory,
+    particles: Vec<Particle>,
 }
 
 struct InstanceBuffer {
@@ -946,7 +991,13 @@ unsafe fn create_descriptor_set_layout(device: &Device, data: &mut AppData) -> R
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT);
 
-    let bindings = &[ubo_binding, sampler_binding];
+    let storage_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(2)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
+    let bindings = &[ubo_binding, sampler_binding, storage_binding];
     let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
 
     data.descriptor_set_layout = device.create_descriptor_set_layout(&info, None)?;
@@ -1536,7 +1587,20 @@ unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Result<
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .image_info(image_info);
 
-        device.update_descriptor_sets(&[ubo_write, sampler_write], &[] as &[vk::CopyDescriptorSet]);
+        let particle_buffer_info = vk::DescriptorBufferInfo::builder()
+            .buffer(data.storage_buffer)
+            .offset(0)
+            .range((size_of::<Vec2>() * MAX_PARTICLE_COUNT) as u64);
+
+        let storage_info = &[particle_buffer_info];
+        let storage_buffer_descriptor_write = vk::WriteDescriptorSet::builder()
+            .dst_set(data.descriptor_sets[i])
+            .dst_binding(2)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(storage_info);
+
+        device.update_descriptor_sets(&[ubo_write, sampler_write, storage_buffer_descriptor_write], &[] as &[vk::CopyDescriptorSet]);
     }
 
     Ok(())
@@ -1603,7 +1667,7 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
             &[data.descriptor_sets[i]],
             &[],
         );
-        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, 100, 0, 0, 0);
+        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, data.particles.len() as u32, 0, 0, 0);
         device.cmd_end_render_pass(*command_buffer);
 
         device.end_command_buffer(*command_buffer)?;
@@ -2037,6 +2101,48 @@ unsafe fn begin_single_time_commands(device: &Device, data: &AppData) -> Result<
     device.begin_command_buffer(command_buffer, &info)?;
 
     Ok(command_buffer)
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+struct Particle {
+    position: Vec2,
+}
+
+unsafe fn create_storage_buffer(device: &Device, instance: &Instance, data: &mut AppData) -> Result<()> {
+    data.particles = vec![];
+
+    let buffer_info = vk::BufferCreateInfo::builder()
+        .size((std::mem::size_of::<Vec2>() * MAX_PARTICLE_COUNT) as u64)
+        .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    data.storage_buffer = device.create_buffer(&buffer_info, None)?;
+
+    let mem_requirements = device.get_buffer_memory_requirements(data.storage_buffer);
+    let memory_type = find_memory_type(instance, data, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)?;
+
+    let alloc_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(mem_requirements.size)
+        .memory_type_index(memory_type);
+
+    data.storage_buffer_memory = device.allocate_memory(&alloc_info, None)?;
+
+    device.bind_buffer_memory(data.storage_buffer, data.storage_buffer_memory, 0)?;
+
+    Ok(())
+}
+
+unsafe fn find_memory_type(instance: &Instance, data: &AppData, type_filter: u32, properties: vk::MemoryPropertyFlags) -> Result<u32, anyhow::Error> {
+    let memory_properties = instance.get_physical_device_memory_properties(data.physical_device);
+
+    for (index, memory_type) in memory_properties.memory_types.iter().enumerate() {
+        if (type_filter & (1 << index)) != 0 && memory_type.property_flags.contains(properties) {
+            return Ok(index as u32);
+        }
+    }
+
+    Err(anyhow!("Failed to find memory type!"))
 }
 
 unsafe fn end_single_time_commands(
