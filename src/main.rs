@@ -34,6 +34,9 @@ use vulkanalia::vk::ExtDebugUtilsExtension;
 use vulkanalia::vk::KhrSurfaceExtension;
 use vulkanalia::vk::KhrSwapchainExtension;
 
+use image::io::Reader as ImageReader;
+use winit::window::Icon;
+
 /// Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 /// The name of the validation layers.
@@ -79,13 +82,25 @@ const SIZE_OF_PARTICLE_COLOR: u64 = (std::mem::size_of::<u32>() * 1 * MAX_PARTIC
 #[rustfmt::skip]
 fn main() -> Result<()> {
     pretty_env_logger::init();
-
+    
     // Window
+    
+    let icon_image = ImageReader::open("./resources/App/Icon.png")
+        .expect("Failed to open icon file")
+        .decode()
+        .expect("Failed to decode icon image")
+        .to_rgba8();
+
+    let icon_width = icon_image.width();
+    let icon_height = icon_image.height();
+    let icon = Icon::from_rgba(icon_image.into_raw(), icon_width, icon_height)
+        .expect("Failed to create window icon");
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("SandGears")
         .with_inner_size(LogicalSize::new(1024, 768))
+        .with_window_icon(Some(icon))
         .build(&event_loop)?;
 
     // App
