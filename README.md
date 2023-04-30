@@ -1,4 +1,4 @@
-
+[![Rustfmt](https://github.com/jordan-schnur/SandGears/actions/workflows/.rustfmt.yml/badge.svg?branch=main)](https://github.com/jordan-schnur/SandGears/actions/workflows/.rustfmt.yml)
 # SandGears
 ### Inspired By [Powder Toy](https://powdertoy.co.uk/)
 
