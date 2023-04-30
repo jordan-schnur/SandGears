@@ -52,6 +52,6 @@ This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md
 - [ ]  Develop a system for saving and loading user-created scenes.
 - [ ]  Optimize the simulation for better performance.
 - [ ]  Add more types of granular materials with different properties.
-- [ ]  Create a tutorial or demo to help users get started.
+- [ ]  Cross-platform builds
+- [ ]  Sign builds from [here](https://shop.certum.eu/open-source-code-signing-code.html)
 - [ ]  Test on various platforms and fix platform-specific issues.
-- [ ]  Write detailed documentation for users and contributors.
