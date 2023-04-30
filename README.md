@@ -20,11 +20,13 @@ bash
 
 ### Building and Running
 
-- TODO
+```BASH
+cargo run
+```
 
 ## Contributing
 
-- TODO
+Please check the [Issues](https://github.com/jordan-schnur/SandGears/issues) section for more specific tasks and feature requests.
 
 ## License
 
@@ -33,14 +35,14 @@ This project is licensed under the MIT License - see the [LICENSE.md](https://ch
 ## TODOs
 
 - [x]  Implement basic sand simulation with a 2D grid.
+- [x]  Add more particles...
+   - [x] Water
+   - [ ] Fire
+   - [ ] Lava
+   - [x] Gas
+   - [ ] Snow
+   - [x] Sand
 - [ ]  Implement text rendering
-- [ ]  Add more particles...
-      -[ ] Water
-      - [ ] Fire
-      - [ ] Lava
-      - [ ] Gas
-      - [ ] Snow
-      - [ ] Sand
 - [ ]  Add support for mechanical contraptions (pistons, hinges, etc.).
 - [ ]  Implement a heater that can melt sand.
 - [ ]  Create a user-friendly interface for adding and interacting with contraptions.
@@ -50,5 +52,3 @@ This project is licensed under the MIT License - see the [LICENSE.md](https://ch
 - [ ]  Create a tutorial or demo to help users get started.
 - [ ]  Test on various platforms and fix platform-specific issues.
 - [ ]  Write detailed documentation for users and contributors.
-
-Please check the [Issues](https://github.com/jordan-schnur/SandGears/issues) section for more specific tasks and feature requests.

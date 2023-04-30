@@ -101,7 +101,6 @@ fn main() -> Result<()> {
             Event::MainEventsCleared if !destroying && !minimized => unsafe { app.render(&window) }.unwrap(),
             // Mark the window as having been resized.
             Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
-                warn!("{:?}", size);
                 if size.width == 0 || size.height == 0 {
                     minimized = true;
                 } else {
@@ -140,17 +139,6 @@ fn main() -> Result<()> {
                     if VirtualKeyCode::Space == keycode {
                         app.paused = !app.paused;
                     }
-
-                    // let particle_type = match keycode {
-                    //     VirtualKeyCode::Key1 => ParticleType::Water,
-                    //     VirtualKeyCode::Key2 => ParticleType::Fire,
-                    //     VirtualKeyCode::Key3 => ParticleType::Lava,
-                    //     VirtualKeyCode::Key4 => ParticleType::Gas,
-                    //     VirtualKeyCode::Key5 => ParticleType::Snow,
-                    //     VirtualKeyCode::Key6 => ParticleType::Sand,
-                    //     VirtualKeyCode::Key7 => ParticleType::Air,
-                    //     _ => return,
-                    // };
 
                     let particle_type = match keycode {
                         VirtualKeyCode::Key1 => ParticleType::Water,
@@ -224,7 +212,6 @@ impl App {
         create_storage_buffer(&device, &instance, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
-        // setup_particles(&mut data);
         create_uniform_buffers(&instance, &device, &mut data)?;
         create_descriptor_pool(&device, &mut data)?;
         create_descriptor_sets(&device, &mut data)?;
@@ -236,28 +223,9 @@ impl App {
         for x in 0..WIDTH {
             screen.push(vec![]);
             for y in 0..HEIGHT {
-                screen[x].push(Particle {
-                    velocity: glm::vec2(0.0, 0.0),
-                    color: glm::vec3(0.0, 0.0, 0.0),
-                    p_type: ParticleType::Air,
-                });
+                screen[x].push(Particle::new(ParticleType::Air));
             }
         }
-
-        // for i in 0..500 {
-        //     screen[i as usize][i as usize] = Particle {
-        //         velocity: glm::vec2 (i as f32, i as f32 ),
-        //         color: glm::vec3 (1.0, 1.0, 1.0),
-        //         p_type: ParticleType::Sand,
-        //     }
-        // }
-        //
-        // for (i, particle) in data.particles.iter_mut().enumerate() {
-        //     let x = particle.position.x;
-        //     let y = particle.position.y;
-        //
-        //     screen[x as usize][y as usize] = particle.clone();
-        // }
 
         Ok(Self {
             entry,
@@ -422,8 +390,8 @@ impl App {
                     if self.can_move(&p_type, px + x, py + x) {
                         let new_particle = Particle {
                             velocity: vec2(0.0, 0.0),
-                            color: vec3(1.0, 1.0, 1.0),
                             p_type: self.current_type.clone(),
+                            air_pressure: 0.0,
                         };
 
                         self.screen[px + x][py + y] = new_particle;
@@ -577,11 +545,6 @@ impl App {
 
         for (old_x, old_y, new_x, new_y, updated_velocity) in updates {
             if old_x == new_x && old_y == new_y {
-                warn!(
-                    "Same particles. Don't remove from simulation. Old ({}, {}) New ({}, {})",
-                    old_x, old_y, new_x, new_y
-                );
-
                 continue;
             }
 
@@ -657,11 +620,6 @@ impl App {
         let time = self.start.elapsed().as_secs_f32();
 
         let model = glm::identity();
-
-        // let model = glm::scale(
-        //     &glm::identity(),
-        //     &glm::vec3(2.0, 2.0, 2.0)
-        // );
 
         let view = glm::translate(&glm::identity(), &glm::vec3(0.0, 0.0, -1.0));
 
@@ -2559,16 +2517,16 @@ struct MyVec3 {
 #[derive(Clone, Debug, Default)]
 struct Particle {
     velocity: Vec2,
-    color: Vec3,
     p_type: ParticleType,
+    air_pressure: f32,
 }
 
 impl Particle {
     fn new(p_type: ParticleType) -> Self {
         Particle {
             velocity: vec2(0.0, 0.0),
-            color: vec3(0.0, 0.0, 0.0),
             p_type,
+            air_pressure: 0.0,
         }
     }
 }
