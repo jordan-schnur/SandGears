@@ -11,8 +11,10 @@ To get started with SandGears, clone the repository and follow the instructions 
 
 bash
 
-`git clone https://github.com/your_username/SandGears.git`
-`cd SandGears`
+```sh
+cargo run
+cd SandGears
+```
 
 ### Prerequisites
 
@@ -21,7 +23,7 @@ bash
 
 ### Building and Running
 
-```BASH
+```sh
 cargo run
 ```
 
@@ -31,7 +33,7 @@ Please check the [Issues](https://github.com/jordan-schnur/SandGears/issues) sec
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.md](https://chat.openai.com/LICENSE.md) file for details.
+This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
 
 ## TODOs
 
