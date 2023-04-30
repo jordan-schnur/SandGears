@@ -84,7 +84,7 @@ fn main() -> Result<()> {
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
-        .with_title("Vulkan Tutorial (Rust)")
+        .with_title("SandGears")
         .with_inner_size(LogicalSize::new(1024, 768))
         .build(&event_loop)?;
 
@@ -279,6 +279,8 @@ impl App {
 
         if !self.paused {
             self.simulate()?;
+        } else {
+            self.add_to_particle_buffer()?;
         }
 
         self.update_storage_buffers(image_index)?;
@@ -395,6 +397,31 @@ impl App {
                 }
             }
         }
+    }
+
+    unsafe fn add_to_particle_buffer(&mut self) -> Result<()> {
+        self.active_particle_positions.clear();
+        self.active_particle_types.clear();
+        let mut num_active_particles = 0;
+
+        for x in 0..self.screen.len() {
+            for y in 0..self.screen[x].len() {
+                match self.screen[x][y].p_type {
+                    ParticleType::Air => continue,
+                    _ => {
+                        num_active_particles += 1;
+                        self.active_particle_positions.push(x as f32);
+                        self.active_particle_positions.push(y as f32);
+                        self.active_particle_types
+                            .push(self.screen[x][y].p_type.clone() as u32);
+                    }
+                }
+            }
+        }
+
+        self.num_active_particles = num_active_particles;
+
+        Ok(())
     }
 
     unsafe fn simulate(&mut self) -> Result<()> {
@@ -871,7 +898,7 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     // Application Info
 
     let application_info = vk::ApplicationInfo::builder()
-        .application_name(b"Vulkan Tutorial (Rust)\0")
+        .application_name(b"SandGears\0")
         .application_version(vk::make_version(1, 0, 0))
         .engine_name(b"No Engine\0")
         .engine_version(vk::make_version(1, 0, 0))

@@ -4,6 +4,8 @@
 
 SandGears is an interactive 2D sandbox simulation that allows users to experiment with mechanical contraptions and granular materials like sand. Play around with pistons, hinges, heaters, and more to create unique contraptions and observe their effects on the sand environment.
 
+![Intro Gif](intro.gif)
+
 ## Getting Started
 
 To get started with SandGears, clone the repository and follow the instructions for building and running the project on your platform.
@@ -43,6 +45,7 @@ This project is licensed under the MIT License - see the [LICENSE.md](https://ch
    - [ ] Snow
    - [x] Sand
 - [ ]  Implement text rendering
+- [ ]  Deal with particle velocity...
 - [ ]  Add support for mechanical contraptions (pistons, hinges, etc.).
 - [ ]  Implement a heater that can melt sand.
 - [ ]  Create a user-friendly interface for adding and interacting with contraptions.
