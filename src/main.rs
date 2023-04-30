@@ -19,7 +19,6 @@ use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use log::*;
 use nalgebra_glm as glm;
-use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 use rand::Rng;
 use thiserror::Error;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
@@ -109,7 +108,7 @@ fn main() -> Result<()> {
                 }
             }
             Event::WindowEvent { event: WindowEvent::CursorMoved { device_id: _, position, .. }, .. } => {
-                app.mouse_position = vec2(position.x as f32, position.y as f32);
+                app.mouse_position = glm::vec2(position.x as f32, position.y as f32);
             }
             Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }, .. } => {
                 app.is_mouse_button_down = true;
@@ -175,7 +174,7 @@ struct App {
     frame: usize,
     resized: bool,
     start: Instant,
-    mouse_position: Vec2,
+    mouse_position: glm::Vec2,
     is_mouse_button_down: bool,
     screen: Vec<Vec<Particle>>,
     last_frame: f32,
@@ -206,9 +205,6 @@ impl App {
         create_command_pool(&instance, &device, &mut data)?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
-        create_texture_image(&instance, &device, &mut data)?;
-        create_texture_image_view(&device, &mut data)?;
-        create_texture_sampler(&device, &mut data)?;
         create_storage_buffer(&device, &instance, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
@@ -235,7 +231,7 @@ impl App {
             frame: 0,
             resized: false,
             start: Instant::now(),
-            mouse_position: vec2(0.0, 0.0),
+            mouse_position: glm::vec2(0.0, 0.0),
             is_mouse_button_down: false,
             screen,
             last_frame: 0 as f32,
@@ -389,7 +385,7 @@ impl App {
                 for py in 0..CURSOR_SIZE {
                     if self.can_move(&p_type, px + x, py + x) {
                         let new_particle = Particle {
-                            velocity: vec2(0.0, 0.0),
+                            velocity: glm::vec2(0.0, 0.0),
                             p_type: self.current_type.clone(),
                             air_pressure: 0.0,
                         };
@@ -773,10 +769,6 @@ impl App {
         self.device.destroy_buffer(self.data.index_buffer, None);
         self.device.free_memory(self.data.vertex_buffer_memory, None);
         self.device.destroy_buffer(self.data.vertex_buffer, None);
-        self.device.destroy_sampler(self.data.texture_sampler, None);
-        self.device.destroy_image_view(self.data.texture_image_view, None);
-        self.device.free_memory(self.data.texture_image_memory, None);
-        self.device.destroy_image(self.data.texture_image, None);
         self.device.destroy_command_pool(self.data.command_pool, None);
         self.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
         self.device.destroy_device(None);
@@ -838,11 +830,6 @@ struct AppData {
     depth_image: vk::Image,
     depth_image_memory: vk::DeviceMemory,
     depth_image_view: vk::ImageView,
-    // Texture
-    texture_image: vk::Image,
-    texture_image_memory: vk::DeviceMemory,
-    texture_image_view: vk::ImageView,
-    texture_sampler: vk::Sampler,
     // Buffers
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
@@ -1640,10 +1627,12 @@ unsafe fn create_texture_image(
     instance: &Instance,
     device: &Device,
     data: &mut AppData,
-) -> Result<()> {
+    file: String,
+    image_handle: vk::Image,
+) -> Result<(vk::Image, vk::DeviceMemory)> {
     // Load
 
-    let image = File::open("resources/texture.png")?;
+    let image = File::open(file.as_str())?;
 
     let decoder = png::Decoder::new(image);
     let mut reader = decoder.read_info()?;
@@ -1687,33 +1676,23 @@ unsafe fn create_texture_image(
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
     )?;
 
-    data.texture_image = texture_image;
-    data.texture_image_memory = texture_image_memory;
-
     // Transition + Copy (image)
 
     transition_image_layout(
         device,
         data,
-        data.texture_image,
+        texture_image,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageLayout::UNDEFINED,
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
     )?;
 
-    copy_buffer_to_image(
-        device,
-        data,
-        staging_buffer,
-        data.texture_image,
-        width,
-        height,
-    )?;
+    copy_buffer_to_image(device, data, staging_buffer, texture_image, width, height)?;
 
     transition_image_layout(
         device,
         data,
-        data.texture_image,
+        texture_image,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
@@ -1724,21 +1703,23 @@ unsafe fn create_texture_image(
     device.destroy_buffer(staging_buffer, None);
     device.free_memory(staging_buffer_memory, None);
 
-    Ok(())
+    Ok((texture_image, texture_image_memory))
 }
 
-unsafe fn create_texture_image_view(device: &Device, data: &mut AppData) -> Result<()> {
-    data.texture_image_view = create_image_view(
+unsafe fn create_texture_image_view(
+    device: &Device,
+    data: &mut AppData,
+    image: vk::Image,
+) -> Result<vk::ImageView> {
+    Ok(create_image_view(
         device,
-        data.texture_image,
+        image,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageAspectFlags::COLOR,
-    )?;
-
-    Ok(())
+    )?)
 }
 
-unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Result<()> {
+unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Result<vk::Sampler> {
     let info = vk::SamplerCreateInfo::builder()
         .mag_filter(vk::Filter::LINEAR)
         .min_filter(vk::Filter::LINEAR)
@@ -1753,9 +1734,7 @@ unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Result<
         .compare_op(vk::CompareOp::ALWAYS)
         .mipmap_mode(vk::SamplerMipmapMode::LINEAR);
 
-    data.texture_sampler = device.create_sampler(&info, None)?;
-
-    Ok(())
+    Ok(device.create_sampler(&info, None)?)
 }
 
 //================================================
@@ -1953,19 +1932,6 @@ unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Result<
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .buffer_info(buffer_info);
 
-        let info = vk::DescriptorImageInfo::builder()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .image_view(data.texture_image_view)
-            .sampler(data.texture_sampler);
-
-        let image_info = &[info];
-        let sampler_write = vk::WriteDescriptorSet::builder()
-            .dst_set(data.descriptor_sets[i])
-            .dst_binding(1)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(image_info);
-
         let particle_buffer_info = vk::DescriptorBufferInfo::builder()
             .buffer(data.particle_position_storage_buffer)
             .offset(0)
@@ -1995,7 +1961,6 @@ unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Result<
         device.update_descriptor_sets(
             &[
                 ubo_write,
-                sampler_write,
                 storage_buffer_descriptor_write,
                 storage_color_buffer_descriptor_write,
             ],
@@ -2122,7 +2087,7 @@ impl SwapchainSupport {
 #[repr(C)]
 #[derive(Clone, Debug)]
 struct ParticleBuffer {
-    particle_positions: Vec<Vec2>,
+    particle_positions: Vec<glm::Vec2>,
 }
 
 #[repr(C)]
@@ -2499,24 +2464,9 @@ impl ParticleType {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-struct MyVec2 {
-    x: f32,
-    y: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-struct MyVec3 {
-    x: f32,
-    y: f32,
-    z: f32,
-}
-
-#[repr(C)]
 #[derive(Clone, Debug, Default)]
 struct Particle {
-    velocity: Vec2,
+    velocity: glm::Vec2,
     p_type: ParticleType,
     air_pressure: f32,
 }
@@ -2524,7 +2474,7 @@ struct Particle {
 impl Particle {
     fn new(p_type: ParticleType) -> Self {
         Particle {
-            velocity: vec2(0.0, 0.0),
+            velocity: glm::vec2(0.0, 0.0),
             p_type,
             air_pressure: 0.0,
         }
