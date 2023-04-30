@@ -20,16 +20,17 @@ use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use log::*;
 use nalgebra_glm as glm;
-use nalgebra_glm::{sin, Vec2, vec2};
+use nalgebra_glm::{e, floor, sin, Vec2, vec2, Vec3, vec3};
 use thiserror::Error;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::window as vk_window;
 use vulkanalia::Version;
 use winit::dpi::LogicalSize;
-use winit::event::{Event, WindowEvent};
+use winit::event::{ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
+use rand::Rng;
 
 use vulkanalia::vk::{ExtDebugUtilsExtension};
 use vulkanalia::vk::KhrSurfaceExtension;
@@ -49,22 +50,10 @@ const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 /// The maximum number of frames that can be processed concurrently.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
-// lazy_static! {
-//     #[rustfmt::skip]
-//     static ref VERTICES: Vec<Vertex> = vec![
-//         Vertex::new(glm::vec3(-0.5, -0.5, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
-//         Vertex::new(glm::vec3(0.5, -0.5, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
-//         Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
-//         Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
-//         //
-//         Vertex::new(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(1.0, 0.0, 0.0), glm::vec2(1.0, 0.0)),
-//         Vertex::new(glm::vec3(0.5, -0.5, -0.5), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
-//         Vertex::new(glm::vec3(0.5, 0.5, -0.5), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
-//         Vertex::new(glm::vec3(-0.5, 0.5, -0.5), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
-//     ];
-// }
-
 const MAX_PARTICLE_COUNT: usize = 10000;
+
+const WIDTH: usize = 1024;
+const HEIGHT: usize = 768;
 
 lazy_static! {
     #[rustfmt::skip]
@@ -85,6 +74,9 @@ lazy_static! {
 const INDICES: &[u16] = &[
     0, 1, 2, 2, 3, 0,
 ];
+
+const SIZE_OF_PARTICLE_POSITION: u64 = (std::mem::size_of::<f64>() * 2 * MAX_PARTICLE_COUNT) as u64;
+const SIZE_OF_PARTICLE_COLOR: u64 = (std::mem::size_of::<f64>() * 3 * MAX_PARTICLE_COUNT) as u64;
 
 #[rustfmt::skip]
 fn main() -> Result<()> {
@@ -118,12 +110,21 @@ fn main() -> Result<()> {
                     app.resized = true;
                 }
             }
+            Event::WindowEvent { event: WindowEvent::CursorMoved { device_id: _, position, .. }, .. } => {
+                app.mousePosition = vec2(position.x as f32, position.y as f32);
+            }
+            Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }, .. } => {
+                app.isMouseButtonDown = true;
+            }
+            Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. }, .. } => {
+                app.isMouseButtonDown = false;
+            }
             // Destroy our Vulkan app.
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 destroying = true;
                 *control_flow = ControlFlow::Exit;
                 unsafe { app.destroy(); }
-            }
+            },
             _ => {}
         }
     });
@@ -139,6 +140,13 @@ struct App {
     frame: usize,
     resized: bool,
     start: Instant,
+    mousePosition: Vec2,
+    isMouseButtonDown: bool,
+    screen: Vec<Vec<Particle>>,
+    lastFrame: f32,
+    fps: f32,
+    framesSinceLastSecond: usize,
+    activeParticles: usize,
 }
 
 impl App {
@@ -165,12 +173,41 @@ impl App {
         create_storage_buffer(&device, &instance, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
-        setup_particles(&mut data);
+        // setup_particles(&mut data);
         create_uniform_buffers(&instance, &device, &mut data)?;
         create_descriptor_pool(&device, &mut data)?;
         create_descriptor_sets(&device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
+
+        let mut screen = vec![];
+
+        for x in 0..WIDTH {
+            screen.push(vec![]);
+            for y in 0..HEIGHT {
+                screen[x].push( Particle {
+                    velocity: glm::vec2 ( 0.0 ,0.0),
+                    color: glm::vec3 (0.0, 0.0, 0.0),
+                    p_type: ParticleType::Air,
+                });
+            }
+        }
+
+        // for i in 0..500 {
+        //     screen[i as usize][i as usize] = Particle {
+        //         velocity: glm::vec2 (i as f32, i as f32 ),
+        //         color: glm::vec3 (1.0, 1.0, 1.0),
+        //         p_type: ParticleType::Sand,
+        //     }
+        // }
+        //
+        // for (i, particle) in data.particles.iter_mut().enumerate() {
+        //     let x = particle.position.x;
+        //     let y = particle.position.y;
+        //
+        //     screen[x as usize][y as usize] = particle.clone();
+        // }
+
         Ok(Self {
             entry,
             instance,
@@ -179,6 +216,13 @@ impl App {
             frame: 0,
             resized: false,
             start: Instant::now(),
+            mousePosition: vec2(0.0, 0.0),
+            isMouseButtonDown: false,
+            screen,
+            lastFrame: 0 as f32,
+            fps: 0 as f32,
+            framesSinceLastSecond: 0,
+            activeParticles: 0,
         })
     }
 
@@ -187,11 +231,11 @@ impl App {
         let in_flight_fence = self.data.in_flight_fences[self.frame];
 
         self.device
-            .wait_for_fences(&[in_flight_fence], true, u64::max_value())?;
+            .wait_for_fences(&[in_flight_fence], true, u64::MAX)?;
 
         let result = self.device.acquire_next_image_khr(
             self.data.swapchain,
-            u64::max_value(),
+            u64::MAX,
             self.data.image_available_semaphores[self.frame],
             vk::Fence::null(),
         );
@@ -205,14 +249,17 @@ impl App {
         let image_in_flight = self.data.images_in_flight[image_index];
         if !image_in_flight.is_null() {
             self.device
-                .wait_for_fences(&[image_in_flight], true, u64::max_value())?;
+                .wait_for_fences(&[image_in_flight], true, u64::MAX)?;
         }
 
         self.data.images_in_flight[image_index] = in_flight_fence;
 
+        self.update_command_buffer(image_index)?;
         self.update_uniform_buffer(image_index)?;
+        self.simulate()?;
+        self.update_storage_buffers(image_index)?;
 
-        self.update_particles(image_index)?;
+        self.calc_fps();
 
         let wait_semaphores = &[self.data.image_available_semaphores[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -253,31 +300,202 @@ impl App {
         Ok(())
     }
 
-    unsafe fn update_particles(&mut self, image_index: usize) -> Result<()> {
-        let active_particle_count: usize = self.data.particles.len();
+    fn calc_fps(&mut self) {
+        let now = self.start.elapsed().as_secs_f32();
+
+        if (now - self.lastFrame) >= 1.0 {
+            self.fps = self.framesSinceLastSecond as f32;
+            self.framesSinceLastSecond = 0;
+            self.lastFrame = now;
+
+            info!("FPS: {}", self.fps);
+            info!("Particles: {}", self.activeParticles);
+        } else {
+            self.framesSinceLastSecond += 1;
+        }
+    }
+
+    unsafe fn is_cell_filled(&self, x: usize, y: usize) -> bool {
+        if x < 0 || x > WIDTH - 1 || y < 0 || y > HEIGHT {
+            return true;
+        }
+
+        if self.screen[x][y].p_type == ParticleType::Air {
+            return false;
+        }
+
+        return true;
+    }
+
+    unsafe fn simulate(&mut self) -> Result<()> {
+        let time = self.start.elapsed().as_secs_f32();
+
+        const GRAVITY: f32 = 0.01;
+        let mut activeParticles = 0;
+
+
+        if self.isMouseButtonDown {
+            let x: usize = self.mousePosition.x.floor() as usize;
+            let y: usize = self.mousePosition.y.floor() as usize;
+
+            if !self.is_cell_filled(x, y) {
+                let newParticle = Particle {
+                    velocity: vec2(0.0, 0.0 ),
+                    color: vec3(1.0, 1.0, 1.0),
+                    p_type: ParticleType::Sand,
+                };
+
+                self.screen[x][y] = newParticle;
+            } else {
+                warn!("Cell is filled at {}, {}", x, y);
+            }
+
+
+        }
+
+        let mut updates: Vec<(usize, usize, usize, usize, f32)> = Vec::new();
+        let mut rng = rand::thread_rng();
+
+        for x in 0..self.screen.len() {
+            for y in 0..self.screen[x].len() {
+                match self.screen[x][y].p_type {
+                    ParticleType::Air => continue,
+                    _ => {
+                        let mut particle = self.screen[x][y].clone();
+                        activeParticles += 1;
+                        if y == 699 {
+                            particle.velocity.y = 0.0;
+                            self.screen[x][y] = particle;
+                            continue;
+                        }
+
+
+                        let mut new_velocity = particle.velocity.y + GRAVITY * time;
+
+                        let mut new_y = if y as f32 + new_velocity >= 700.0 {
+                            699
+                        } else {
+                            (y as f32 + new_velocity).floor() as usize
+                        };
+
+                        let mut new_x = x;
+                        let below_particle = self.screen[x][y+1].clone();
+                        let mut valid_position = true;
+
+                        if self.is_cell_filled(new_x, new_y) {
+                            valid_position = false;
+                            // if new_velocity >= below_particle.velocity.y {
+                            //     // No collision
+                            //     // warn!("No collsion ");
+                            // } else {
+                            //     if !self.is_cell_filled(new_x, new_y-1) {
+                            //         new_y -= 1;
+                            //     }
+                            //     warn!("Collison ");
+                            // }
+                            if !self.is_cell_filled(new_x, new_y-1) {
+                                new_y -= 1;
+                            }
+                        }
+
+                        if valid_position {
+                            let updated_velocity = if new_y >= 699 { 0.0 } else { new_velocity };
+
+                            updates.push((x, y, new_x, new_y, updated_velocity));
+                        } else {
+                            let updated_velocity = if new_y >= 699 { 0.0 } else { new_velocity };
+                            particle.velocity.y = updated_velocity;
+                            self.screen[x][y] = particle;
+                        }
+                    }
+                }
+            }
+        }
+
+        for (old_x, old_y, new_x, new_y, updated_velocity) in updates {
+            let mut particle = self.screen[old_x][old_y].clone();
+            particle.velocity.y = updated_velocity;
+            self.screen[old_x][old_y] = Particle::new(ParticleType::Air);
+            self.screen[new_x][new_y] = particle;
+        }
+
+        self.activeParticles = activeParticles;
+        Ok(())
+    }
+
+    unsafe fn update_storage_buffers(&mut self, image_index: usize) -> Result<()> {
+        if self.activeParticles == 0 {
+            return Ok(());
+        }
 
         let time = self.start.elapsed().as_secs_f32();
 
-        const GRAVITY: f32 = 0.25;
-        for particle in &mut self.data.particles {
-            particle.position.y += GRAVITY * time;
-        }
-
         let mut data_ptr = self.device.map_memory(
-            self.data.storage_buffer_memory,
+            self.data.particle_position_storage_buffer_memory,
             0,
-            (std::mem::size_of::<Vec2>() * active_particle_count) as u64,
+            (self.activeParticles * std::mem::size_of::<f32>() * 2) as u64,
             vk::MemoryMapFlags::empty()
         )?;
 
-        let mut positions: Vec<Vec2> = self.data.particles
+        let positions: Vec<f32> = self.screen
             .iter()
-            .map(|particle| particle.position)
+            .enumerate()
+            .flat_map(|(i, row)| {
+                row.iter()
+                    .enumerate()
+                    .filter(|(_, particle)| particle.p_type != ParticleType::Air)
+                    .flat_map(move |(j, _)| vec![i as f32, j as f32])
+            })
             .collect();
 
-        std::ptr::copy_nonoverlapping(positions.as_ptr(), data_ptr.cast::<Vec2>(), active_particle_count);
 
-        self.device.unmap_memory(self.data.storage_buffer_memory);
+        // let mut positions: Vec<Vec2> = self.data.particles
+        //     .iter()
+        //     .map(|particle| vec2(particle.position.x, particle.position.y))
+        //     .collect();
+        //
+        // let positions_f64: Vec<f32> = positions
+        //     .iter()
+        //     .flat_map(|v| vec![v.x as f32, v.y as f32])
+        //     .collect();
+        //
+        let (prefix, aligned, suffix) = positions.align_to::<f32>();
+
+        if !prefix.is_empty() || !suffix.is_empty() {
+            return Err(anyhow!("Particles are not properly aligned."));
+        }
+
+        std::ptr::copy_nonoverlapping(aligned.as_ptr(), data_ptr.cast(), self.activeParticles * 2);
+
+        self.device.unmap_memory(self.data.particle_position_storage_buffer_memory);
+
+        // let mut data_ptr_2 = self.device.map_memory(
+        //     self.data.particle_color_storage_buffer_memory,
+        //     0,
+        //     ( * std::mem::size_of::<f32>() * 3) as u64,
+        //     vk::MemoryMapFlags::empty()
+        // )?;
+        //
+        // let mut colors: Vec<Vec3> = self.data.particles
+        //     .iter()
+        //     .map(|particle| vec3(particle.color.x, particle.color.y, particle.color.z))
+        //     .collect();
+        //
+        // let colors_f64: Vec<f32> = colors
+        //     .iter()
+        //     .flat_map(|v| vec![v.x as f32, v.y as f32, v.z as f32])
+        //     .collect();
+        //
+        // let (prefix, aligned2, suffix) = colors_f64.align_to::<f32>();
+        //
+        // if !prefix.is_empty() || !suffix.is_empty() {
+        //     return Err(anyhow!("Particles are not properly aligned."));
+        // }
+        //
+        // // memcpy(&colors, data_ptr_2.cast(), 1);
+        // std::ptr::copy_nonoverlapping(aligned2.as_ptr(), data_ptr_2.cast(), active_particle_count * 3);
+        //
+        // self.device.unmap_memory(self.data.particle_color_storage_buffer_memory);
 
         Ok(())
     }
@@ -327,12 +545,6 @@ impl App {
 
         let time = self.start.elapsed().as_secs_f32();
 
-        let model = glm::rotate(
-            &glm::identity(),
-            time * glm::radians(&glm::vec1(90.0))[0],
-            &glm::vec3(0.0, 0.0, 1.0),
-        );
-
         let model = glm::identity();
 
         let view = glm::translate(
@@ -340,26 +552,10 @@ impl App {
             &glm::vec3(0.0, 0.0, -1.0),
         );
 
-        let mut proj = glm::perspective(
-                self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
-                glm::radians(&glm::vec1(45.0))[0],
-                0.1,
-                10.0,
-            );
-
-        // let mut proj = glm::perspective_rh_zo(
-        //     self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
-        //     glm::radians(&glm::vec1(45.0))[0],
-        //     0.1,
-        //     10.0,
-        // );
-
-        proj = glm::ortho_rh_zo(
+        let proj = glm::ortho_rh_zo(
             0.0, self.data.swapchain_extent.width as f32, 0.0, self.data.swapchain_extent.height as f32, 0.001, // This sets the depth range from [0, 1] to [-1, 1].
             10.0,
         );
-
-
 
          let ubo = UniformBufferObject { model, view, proj };
         // Copy
@@ -375,6 +571,80 @@ impl App {
 
         self.device
             .unmap_memory(self.data.uniform_buffers_memory[image_index]);
+
+        Ok(())
+    }
+
+    unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
+        let command_buffer = self.data.command_buffers[image_index];
+
+        self.device.reset_command_buffer(
+            command_buffer,
+            vk::CommandBufferResetFlags::empty(),
+        )?;
+
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+       self.device.begin_command_buffer(command_buffer, &info)?;
+
+        let memory_barrier = vk::MemoryBarrier::builder()
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+        self.device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::VERTEX_SHADER,
+            vk::PipelineStageFlags::VERTEX_SHADER,
+            vk::DependencyFlags::empty(),
+            &[memory_barrier],
+            &[] as &[vk::BufferMemoryBarrier],
+            &[] as &[vk::ImageMemoryBarrier],
+        );
+
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(self.data.swapchain_extent);
+
+        let color_clear_value = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
+
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
+
+        let clear_values = &[color_clear_value, depth_clear_value];
+        let info = vk::RenderPassBeginInfo::builder()
+            .render_pass(self.data.render_pass)
+            .framebuffer(self.data.framebuffers[image_index])
+            .render_area(render_area)
+            .clear_values(clear_values);
+
+        self.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
+        self.device.cmd_bind_pipeline(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            self.data.pipeline,
+        );
+        self.device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
+        self.device.cmd_bind_index_buffer(command_buffer, self.data.index_buffer, 0, vk::IndexType::UINT16);
+        self.device.cmd_bind_descriptor_sets(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            self.data.pipeline_layout,
+            0,
+            &[self.data.descriptor_sets[image_index]],
+            &[],
+        );
+        self.device.cmd_draw_indexed(command_buffer, INDICES.len() as u32, self.activeParticles as u32, 0, 0, 0);
+        self.device.cmd_end_render_pass(command_buffer);
+
+        self.device.end_command_buffer(command_buffer)?;
 
         Ok(())
     }
@@ -405,8 +675,10 @@ impl App {
 
         self.destroy_swapchain();
 
-        self.device.free_memory(self.data.storage_buffer_memory, None);
-        self.device.destroy_buffer(self.data.storage_buffer, None);
+        self.device.free_memory(self.data.particle_position_storage_buffer_memory, None);
+        self.device.destroy_buffer(self.data.particle_position_storage_buffer, None);
+        self.device.free_memory(self.data.particle_color_storage_buffer_memory, None);
+        self.device.destroy_buffer(self.data.particle_color_storage_buffer, None);
         self.data.in_flight_fences.iter().for_each(|f| self.device.destroy_fence(*f, None));
         self.data.render_finished_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
         self.data.image_available_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
@@ -446,14 +718,6 @@ impl App {
         self.device.destroy_render_pass(self.data.render_pass, None);
         self.data.swapchain_image_views.iter().for_each(|v| self.device.destroy_image_view(*v, None));
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
-    }
-}
-
-fn setup_particles(data: &mut AppData) {
-    for i in 0..500 {
-        data.particles.push(Particle {
-            position: vec2(i as f32, (i as f32)),
-        });
     }
 }
 
@@ -511,8 +775,10 @@ struct AppData {
     render_finished_semaphores: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
     images_in_flight: Vec<vk::Fence>,
-    storage_buffer: vk::Buffer,
-    storage_buffer_memory: vk::DeviceMemory,
+    particle_position_storage_buffer: vk::Buffer,
+    particle_position_storage_buffer_memory: vk::DeviceMemory,
+    particle_color_storage_buffer: vk::Buffer,
+    particle_color_storage_buffer_memory: vk::DeviceMemory,
     particles: Vec<Particle>,
 }
 
@@ -997,7 +1263,13 @@ unsafe fn create_descriptor_set_layout(device: &Device, data: &mut AppData) -> R
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::VERTEX);
 
-    let bindings = &[ubo_binding, sampler_binding, storage_binding];
+    let storage_color_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(3)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
+    let bindings = &[ubo_binding, sampler_binding, storage_binding, storage_color_binding];
     let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
 
     data.descriptor_set_layout = device.create_descriptor_set_layout(&info, None)?;
@@ -1181,7 +1453,9 @@ unsafe fn create_command_pool(
 ) -> Result<()> {
     let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
 
-    let info = vk::CommandPoolCreateInfo::builder().queue_family_index(indices.graphics);
+    let info = vk::CommandPoolCreateInfo::builder()
+        .queue_family_index(indices.graphics)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
     data.command_pool = device.create_command_pool(&info, None)?;
 
@@ -1538,7 +1812,15 @@ unsafe fn create_descriptor_pool(device: &Device, data: &mut AppData) -> Result<
         .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
         .descriptor_count(data.swapchain_images.len() as u32);
 
-    let pool_sizes = &[ubo_size, sampler_size];
+    let particle_position_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(data.swapchain_images.len() as u32);
+
+    let particle_color_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(data.swapchain_images.len() as u32);
+
+    let pool_sizes = &[ubo_size, sampler_size, particle_position_size, particle_color_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
         .max_sets(data.swapchain_images.len() as u32);
@@ -1588,9 +1870,9 @@ unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Result<
             .image_info(image_info);
 
         let particle_buffer_info = vk::DescriptorBufferInfo::builder()
-            .buffer(data.storage_buffer)
+            .buffer(data.particle_position_storage_buffer)
             .offset(0)
-            .range((size_of::<Vec2>() * MAX_PARTICLE_COUNT) as u64);
+            .range(SIZE_OF_PARTICLE_POSITION);
 
         let storage_info = &[particle_buffer_info];
         let storage_buffer_descriptor_write = vk::WriteDescriptorSet::builder()
@@ -1600,7 +1882,20 @@ unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Result<
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .buffer_info(storage_info);
 
-        device.update_descriptor_sets(&[ubo_write, sampler_write, storage_buffer_descriptor_write], &[] as &[vk::CopyDescriptorSet]);
+        let particle_color_buffer_info = vk::DescriptorBufferInfo::builder()
+            .buffer(data.particle_color_storage_buffer)
+            .offset(0)
+            .range(SIZE_OF_PARTICLE_COLOR);
+
+        let storage_color_info = &[particle_color_buffer_info];
+        let storage_color_buffer_descriptor_write = vk::WriteDescriptorSet::builder()
+            .dst_set(data.descriptor_sets[i])
+            .dst_binding(3)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(storage_color_info);
+
+        device.update_descriptor_sets(&[ubo_write, sampler_write, storage_buffer_descriptor_write, storage_color_buffer_descriptor_write], &[] as &[vk::CopyDescriptorSet]);
     }
 
     Ok(())
@@ -1619,59 +1914,6 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
         .command_buffer_count(data.framebuffers.len() as u32);
 
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
-
-    // Commands
-
-    for (i, command_buffer) in data.command_buffers.iter().enumerate() {
-        let info = vk::CommandBufferBeginInfo::builder();
-
-        device.begin_command_buffer(*command_buffer, &info)?;
-
-        let render_area = vk::Rect2D::builder()
-            .offset(vk::Offset2D::default())
-            .extent(data.swapchain_extent);
-
-        let color_clear_value = vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: [0.0, 0.0, 0.0, 1.0],
-            },
-        };
-
-        let depth_clear_value = vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue {
-                depth: 1.0,
-                stencil: 0,
-            },
-        };
-
-        let clear_values = &[color_clear_value, depth_clear_value];
-        let info = vk::RenderPassBeginInfo::builder()
-            .render_pass(data.render_pass)
-            .framebuffer(data.framebuffers[i])
-            .render_area(render_area)
-            .clear_values(clear_values);
-
-        device.cmd_begin_render_pass(*command_buffer, &info, vk::SubpassContents::INLINE);
-        device.cmd_bind_pipeline(
-            *command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            data.pipeline,
-        );
-        device.cmd_bind_vertex_buffers(*command_buffer, 0, &[data.vertex_buffer], &[0]);
-        device.cmd_bind_index_buffer(*command_buffer, data.index_buffer, 0, vk::IndexType::UINT16);
-        device.cmd_bind_descriptor_sets(
-            *command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            data.pipeline_layout,
-            0,
-            &[data.descriptor_sets[i]],
-            &[],
-        );
-        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, data.particles.len() as u32, 0, 0, 0);
-        device.cmd_end_render_pass(*command_buffer);
-
-        device.end_command_buffer(*command_buffer)?;
-    }
 
     Ok(())
 }
@@ -1770,6 +2012,12 @@ impl SwapchainSupport {
                 .get_physical_device_surface_present_modes_khr(physical_device, data.surface)?,
         })
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+struct ParticleBuffer {
+    particle_positions: Vec<Vec2>,
 }
 
 #[repr(C)]
@@ -2104,31 +2352,89 @@ unsafe fn begin_single_time_commands(device: &Device, data: &AppData) -> Result<
 }
 
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default, PartialEq)]
+enum ParticleType {
+ Water,
+Fire,
+Lava,
+Gas,
+Snow,
+Sand,
+    #[default]
+    Air,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct MyVec2 {
+    x: f32,
+    y: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct MyVec3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Debug, Default)]
 struct Particle {
-    position: Vec2,
+    velocity: Vec2,
+    color: Vec3,
+    p_type: ParticleType,
+}
+
+impl Particle {
+    fn new(p_type: ParticleType) -> Self {
+        Particle {
+            velocity: vec2(0.0, 0.0),
+            color: vec3(0.0, 0.0, 0.0),
+            p_type
+        }
+    }
 }
 
 unsafe fn create_storage_buffer(device: &Device, instance: &Instance, data: &mut AppData) -> Result<()> {
     data.particles = vec![];
 
     let buffer_info = vk::BufferCreateInfo::builder()
-        .size((std::mem::size_of::<Vec2>() * MAX_PARTICLE_COUNT) as u64)
+        .size(SIZE_OF_PARTICLE_POSITION)
         .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-    data.storage_buffer = device.create_buffer(&buffer_info, None)?;
+    data.particle_position_storage_buffer = device.create_buffer(&buffer_info, None)?;
 
-    let mem_requirements = device.get_buffer_memory_requirements(data.storage_buffer);
+    let mem_requirements = device.get_buffer_memory_requirements(data.particle_position_storage_buffer);
     let memory_type = find_memory_type(instance, data, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)?;
 
     let alloc_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(mem_requirements.size)
         .memory_type_index(memory_type);
 
-    data.storage_buffer_memory = device.allocate_memory(&alloc_info, None)?;
+    data.particle_position_storage_buffer_memory = device.allocate_memory(&alloc_info, None)?;
 
-    device.bind_buffer_memory(data.storage_buffer, data.storage_buffer_memory, 0)?;
+    device.bind_buffer_memory(data.particle_position_storage_buffer, data.particle_position_storage_buffer_memory, 0)?;
+
+    let buffer_info = vk::BufferCreateInfo::builder()
+        .size(SIZE_OF_PARTICLE_COLOR)
+        .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    data.particle_color_storage_buffer = device.create_buffer(&buffer_info, None)?;
+
+    let mem_requirements = device.get_buffer_memory_requirements(data.particle_color_storage_buffer);
+    let memory_type = find_memory_type(instance, data, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)?;
+
+    let alloc_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(mem_requirements.size)
+        .memory_type_index(memory_type);
+
+    data.particle_color_storage_buffer_memory = device.allocate_memory(&alloc_info, None)?;
+
+    device.bind_buffer_memory(data.particle_color_storage_buffer, data.particle_color_storage_buffer_memory, 0)?;
 
     Ok(())
 }
