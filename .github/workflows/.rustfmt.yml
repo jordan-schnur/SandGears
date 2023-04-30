@@ -1,0 +1,25 @@
+name: Rustfmt
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt
+          override: true
+
+      - name: Format Rust code
+        run: cargo fmt -- --check

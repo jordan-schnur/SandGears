@@ -23,3 +23,4 @@ tobj = { version = "3", features = ["log"] }
 # used to create a window to render to
 vulkanalia = { version = "=0.18.0", features = ["libloading", "provisional", "window"] }
 winit = "0.28"
+rand = "0.8.5"

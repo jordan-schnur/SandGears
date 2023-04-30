@@ -19,13 +19,14 @@ use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use log::*;
 use nalgebra_glm as glm;
+use rand::Rng;
 use thiserror::Error;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::window as vk_window;
 use vulkanalia::Version;
 use winit::dpi::LogicalSize;
-use winit::event::{Event, WindowEvent};
+use winit::event::{ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
 
@@ -47,29 +48,18 @@ const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 /// The maximum number of frames that can be processed concurrently.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
-// lazy_static! {
-//     #[rustfmt::skip]
-//     static ref VERTICES: Vec<Vertex> = vec![
-//         Vertex::new(glm::vec3(-0.5, -0.5, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
-//         Vertex::new(glm::vec3(0.5, -0.5, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
-//         Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
-//         Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
-//         //
-//         Vertex::new(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(1.0, 0.0, 0.0), glm::vec2(1.0, 0.0)),
-//         Vertex::new(glm::vec3(0.5, -0.5, -0.5), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
-//         Vertex::new(glm::vec3(0.5, 0.5, -0.5), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
-//         Vertex::new(glm::vec3(-0.5, 0.5, -0.5), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
-//     ];
-// }
+const MAX_PARTICLE_COUNT: usize = 100000;
 
+const WIDTH: usize = 1024;
+const HEIGHT: usize = 768;
 
 lazy_static! {
     #[rustfmt::skip]
     static ref VERTICES: Vec<Vertex> = vec![
-        Vertex::new(glm::vec3(100.0, 100.0, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
-        Vertex::new(glm::vec3(500.0, 100.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
-        Vertex::new(glm::vec3(500.0, 500.0, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
-        Vertex::new(glm::vec3(100.0, 900.0, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
+        Vertex::new(glm::vec3(0.0, 0.0, 0.0),glm::vec3(1.0, 0.0, 0.0),glm::vec2(1.0, 0.0)),
+        Vertex::new(glm::vec3(1.0, 0.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
+        Vertex::new(glm::vec3(1.0, 1.0, 0.0), glm::vec3(0.0, 0.0, 1.0), glm::vec2(0.0, 1.0)),
+        Vertex::new(glm::vec3(0.0, 1.0, 0.0), glm::vec3(1.0, 1.0, 1.0), glm::vec2(1.0, 1.0)),
         //
         Vertex::new(glm::vec3(100.0, 100.0, 0.0), glm::vec3(1.0, 0.0, 0.0), glm::vec2(1.0, 0.0)),
         Vertex::new(glm::vec3(500.0, 100.0, 0.0), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)),
@@ -81,9 +71,10 @@ lazy_static! {
 #[rustfmt::skip]
 const INDICES: &[u16] = &[
     0, 1, 2, 2, 3, 0,
-    //
-    4, 5, 6, 6, 7, 4
 ];
+
+const SIZE_OF_PARTICLE_POSITION: u64 = (std::mem::size_of::<f64>() * 2 * MAX_PARTICLE_COUNT) as u64;
+const SIZE_OF_PARTICLE_COLOR: u64 = (std::mem::size_of::<u32>() * 1 * MAX_PARTICLE_COUNT) as u64;
 
 #[rustfmt::skip]
 fn main() -> Result<()> {
@@ -116,12 +107,58 @@ fn main() -> Result<()> {
                     app.resized = true;
                 }
             }
+            Event::WindowEvent { event: WindowEvent::CursorMoved { device_id: _, position, .. }, .. } => {
+                app.mouse_position = glm::vec2(position.x as f32, position.y as f32);
+            }
+            Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }, .. } => {
+                app.is_mouse_button_down = true;
+            }
+            Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. }, .. } => {
+                app.is_mouse_button_down = false;
+            }
+            Event::WindowEvent {
+                event: WindowEvent::KeyboardInput { input, .. },
+                ..
+            } => {
+                if let Some(keycode) = input.virtual_keycode {
+                    use winit::event::VirtualKeyCode;
+                    
+                    if input.state != ElementState::Pressed {
+                        return;
+                    }
+                    
+                    if VirtualKeyCode::Escape == keycode {
+                        destroying = true;
+                        *control_flow = ControlFlow::Exit;
+                        unsafe { app.destroy(); }
+                        
+                        return;
+                    }
+                    
+                    if VirtualKeyCode::Space == keycode {
+                        app.paused = !app.paused;
+                    }
+
+                    let particle_type = match keycode {
+                        VirtualKeyCode::Key1 => ParticleType::Water,
+                        VirtualKeyCode::Key2 => ParticleType::Sand,
+                        VirtualKeyCode::Key3 => ParticleType::Gas,
+                        VirtualKeyCode::Key4 => ParticleType::Metal,
+                        VirtualKeyCode::Key5 => ParticleType::Air,
+                        _ => return,
+                    };
+                    
+                    info!("Selected {:?}", particle_type);
+
+                    app.current_type = particle_type;
+                }
+            }
             // Destroy our Vulkan app.
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 destroying = true;
                 *control_flow = ControlFlow::Exit;
                 unsafe { app.destroy(); }
-            }
+            },
             _ => {}
         }
     });
@@ -137,6 +174,17 @@ struct App {
     frame: usize,
     resized: bool,
     start: Instant,
+    mouse_position: glm::Vec2,
+    is_mouse_button_down: bool,
+    screen: Vec<Vec<Particle>>,
+    last_frame: f32,
+    fps: f32,
+    frames_since_last_second: usize,
+    num_active_particles: usize,
+    active_particle_positions: Vec<f32>,
+    active_particle_types: Vec<u32>,
+    current_type: ParticleType,
+    paused: bool,
 }
 
 impl App {
@@ -157,9 +205,7 @@ impl App {
         create_command_pool(&instance, &device, &mut data)?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
-        create_texture_image(&instance, &device, &mut data)?;
-        create_texture_image_view(&device, &mut data)?;
-        create_texture_sampler(&device, &mut data)?;
+        create_storage_buffer(&device, &instance, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
@@ -167,6 +213,16 @@ impl App {
         create_descriptor_sets(&device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
+
+        let mut screen = vec![];
+
+        for x in 0..WIDTH {
+            screen.push(vec![]);
+            for y in 0..HEIGHT {
+                screen[x].push(Particle::new(ParticleType::Air));
+            }
+        }
+
         Ok(Self {
             entry,
             instance,
@@ -175,6 +231,17 @@ impl App {
             frame: 0,
             resized: false,
             start: Instant::now(),
+            mouse_position: glm::vec2(0.0, 0.0),
+            is_mouse_button_down: false,
+            screen,
+            last_frame: 0 as f32,
+            fps: 0 as f32,
+            frames_since_last_second: 0,
+            num_active_particles: 0,
+            active_particle_positions: vec![],
+            active_particle_types: vec![],
+            current_type: ParticleType::Sand,
+            paused: false,
         })
     }
 
@@ -183,11 +250,11 @@ impl App {
         let in_flight_fence = self.data.in_flight_fences[self.frame];
 
         self.device
-            .wait_for_fences(&[in_flight_fence], true, u64::max_value())?;
+            .wait_for_fences(&[in_flight_fence], true, u64::MAX)?;
 
         let result = self.device.acquire_next_image_khr(
             self.data.swapchain,
-            u64::max_value(),
+            u64::MAX,
             self.data.image_available_semaphores[self.frame],
             vk::Fence::null(),
         );
@@ -201,12 +268,22 @@ impl App {
         let image_in_flight = self.data.images_in_flight[image_index];
         if !image_in_flight.is_null() {
             self.device
-                .wait_for_fences(&[image_in_flight], true, u64::max_value())?;
+                .wait_for_fences(&[image_in_flight], true, u64::MAX)?;
         }
 
         self.data.images_in_flight[image_index] = in_flight_fence;
 
+        self.update_command_buffer(image_index)?;
         self.update_uniform_buffer(image_index)?;
+        self.add_particles();
+
+        if !self.paused {
+            self.simulate()?;
+        }
+
+        self.update_storage_buffers(image_index)?;
+
+        self.calc_fps();
 
         let wait_semaphores = &[self.data.image_available_semaphores[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -247,88 +324,311 @@ impl App {
         Ok(())
     }
 
+    fn calc_fps(&mut self) {
+        let now = self.start.elapsed().as_secs_f32();
+
+        if (now - self.last_frame) >= 1.0 {
+            self.fps = self.frames_since_last_second as f32;
+            self.frames_since_last_second = 0;
+            self.last_frame = now;
+
+            info!("FPS: {}", self.fps);
+            info!("Particles: {}", self.num_active_particles);
+        } else {
+            self.frames_since_last_second += 1;
+        }
+    }
+
+    unsafe fn is_cell_filled(&self, x: usize, y: usize) -> bool {
+        if x < 1 || x > WIDTH - 1 || y < 1 || y > HEIGHT {
+            return true;
+        }
+
+        if self.screen[x][y].p_type == ParticleType::Air {
+            return false;
+        }
+
+        if y >= 699 {
+            return true;
+        }
+
+        return true;
+    }
+
+    unsafe fn can_move(&self, p_type: &ParticleType, x: usize, y: usize) -> bool {
+        if x < 1 || x > WIDTH - 2 || y < 1 || y > HEIGHT - 2 || y >= 699 {
+            return false;
+        }
+
+        let test_cell = &self.screen[x][y].p_type;
+
+        if test_cell == &ParticleType::Air {
+            return true;
+        }
+
+        if p_type.density() > test_cell.density() {
+            return true;
+        }
+
+        return false;
+    }
+
+    unsafe fn add_particles(&mut self) {
+        const CURSOR_SIZE: usize = 5;
+
+        if self.is_mouse_button_down {
+            let x: usize = self.mouse_position.x.floor() as usize;
+            let y: usize = self.mouse_position.y.floor() as usize;
+            let p_type = self.current_type.clone();
+
+            for px in 0..CURSOR_SIZE {
+                for py in 0..CURSOR_SIZE {
+                    if self.can_move(&p_type, px + x, py + x) {
+                        let new_particle = Particle {
+                            velocity: glm::vec2(0.0, 0.0),
+                            p_type: self.current_type.clone(),
+                            air_pressure: 0.0,
+                        };
+
+                        self.screen[px + x][py + y] = new_particle;
+                    }
+                }
+            }
+        }
+    }
+
+    unsafe fn simulate(&mut self) -> Result<()> {
+        self.active_particle_positions.clear();
+        self.active_particle_types.clear();
+        let time = self.start.elapsed().as_secs_f32();
+
+        const GRAVITY: f32 = 0.01;
+        let mut num_active_particles = 0;
+
+        let mut updates: Vec<(usize, usize, usize, usize, f32)> = Vec::new();
+        let mut rng = rand::thread_rng();
+
+        for x in 0..self.screen.len() {
+            for y in 0..self.screen[x].len() {
+                match self.screen[x][y].p_type {
+                    ParticleType::Air => continue,
+                    ParticleType::Sand => {
+                        let mut particle = self.screen[x][y].clone();
+                        num_active_particles += 1;
+                        if y == 699 {
+                            self.active_particle_positions.push(x as f32);
+                            self.active_particle_positions.push(y as f32);
+                            self.active_particle_types
+                                .push(particle.p_type.clone() as u32);
+
+                            particle.velocity.y = 0.0;
+                            self.screen[x][y] = particle;
+                            continue;
+                        }
+
+                        let p_type = &ParticleType::Sand;
+                        let mut new_x = x;
+                        let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
+
+                        if self.can_move(p_type, new_x, new_y + 1) {
+                            new_y += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(p_type, new_x - 1, new_y + 1) {
+                            new_y += 1;
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(p_type, new_x + 1, new_y + 1) {
+                            new_y += 1;
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        }
+
+                        self.active_particle_positions.push(new_x as f32);
+                        self.active_particle_positions.push(new_y as f32);
+                        self.active_particle_types.push(particle.p_type as u32);
+                    }
+                    ParticleType::Water => {
+                        let mut particle = self.screen[x][y].clone();
+                        num_active_particles += 1;
+                        if y == 699 {
+                            self.active_particle_positions.push(x as f32);
+                            self.active_particle_positions.push(y as f32);
+                            self.active_particle_types
+                                .push(particle.p_type.clone() as u32);
+
+                            if particle.velocity.y != 0.0 {
+                                particle.velocity.y = 0.0;
+                                self.screen[x][y] = particle;
+                            }
+
+                            continue;
+                        }
+
+                        let p_type = &ParticleType::Water;
+                        let mut new_x = x;
+                        let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
+
+                        if self.can_move(p_type, new_x, new_y + 1) {
+                            new_y += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(p_type, new_x - 1, new_y + 1) {
+                            new_y += 1;
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(p_type, new_x + 1, new_y + 1) {
+                            new_y += 1;
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        }
+
+                        let random_direction = rng.gen_range(-1..2);
+
+                        if random_direction == -1 && self.can_move(p_type, new_x - 1, new_y) {
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if random_direction == 1 && self.can_move(p_type, new_x + 1, new_y) {
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        }
+
+                        self.active_particle_positions.push(new_x as f32);
+                        self.active_particle_positions.push(new_y as f32);
+                        self.active_particle_types.push(particle.p_type as u32);
+                    }
+                    ParticleType::Gas => {
+                        let particle = self.screen[x][y].clone();
+                        num_active_particles += 1;
+
+                        let p_type = &ParticleType::Gas;
+                        let mut new_x = x;
+                        let mut new_y = y;
+
+                        if self.can_move(p_type, new_x, new_y - 1) {
+                            new_y -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(p_type, new_x - 1, new_y - 1) {
+                            new_y -= 1;
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(p_type, new_x + 1, new_y - 1) {
+                            new_y -= 1;
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(p_type, new_x - 1, new_y) {
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(p_type, new_x + 1, new_y) {
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        }
+
+                        self.active_particle_positions.push(new_x as f32);
+                        self.active_particle_positions.push(new_y as f32);
+                        self.active_particle_types.push(particle.p_type as u32);
+                    }
+                    ParticleType::Metal => {
+                        num_active_particles += 1;
+                        self.active_particle_positions.push(x as f32);
+                        self.active_particle_positions.push(y as f32);
+                        self.active_particle_types.push(ParticleType::Metal as u32);
+                    }
+                    _ => {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        for (old_x, old_y, new_x, new_y, updated_velocity) in updates {
+            if old_x == new_x && old_y == new_y {
+                continue;
+            }
+
+            let mut particle = self.screen[old_x][old_y].clone();
+            let new_particle = self.screen[new_x][new_y].clone();
+            particle.velocity.y = updated_velocity;
+            self.screen[old_x][old_y] = new_particle;
+            self.screen[new_x][new_y] = particle;
+        }
+
+        self.num_active_particles = num_active_particles;
+        Ok(())
+    }
+
+    unsafe fn update_storage_buffers(&mut self, image_index: usize) -> Result<()> {
+        if self.num_active_particles == 0 {
+            return Ok(());
+        }
+
+        let time = self.start.elapsed().as_secs_f32();
+
+        let data_ptr = self.device.map_memory(
+            self.data.particle_position_storage_buffer_memory,
+            0,
+            (self.num_active_particles * std::mem::size_of::<f32>() * 2) as u64,
+            vk::MemoryMapFlags::empty(),
+        )?;
+
+        let (prefix, aligned, suffix) = self.active_particle_positions.align_to::<f32>();
+
+        if !prefix.is_empty() || !suffix.is_empty() {
+            return Err(anyhow!("Particles are not properly aligned."));
+        }
+
+        std::ptr::copy_nonoverlapping(
+            aligned.as_ptr(),
+            data_ptr.cast(),
+            self.num_active_particles * 2,
+        );
+
+        self.device
+            .unmap_memory(self.data.particle_position_storage_buffer_memory);
+
+        let data_ptr_2 = self.device.map_memory(
+            self.data.particle_color_storage_buffer_memory,
+            0,
+            (self.num_active_particles * std::mem::size_of::<u32>()) as u64,
+            vk::MemoryMapFlags::empty(),
+        )?;
+
+        let (prefix, aligned2, suffix) = self.active_particle_types.align_to::<u32>();
+
+        if !prefix.is_empty() || !suffix.is_empty() {
+            return Err(anyhow!("Particles are not properly aligned."));
+        }
+
+        std::ptr::copy_nonoverlapping(
+            aligned2.as_ptr(),
+            data_ptr_2.cast(),
+            self.num_active_particles,
+        );
+
+        self.device
+            .unmap_memory(self.data.particle_color_storage_buffer_memory);
+
+        Ok(())
+    }
+
     /// Updates the uniform buffer object for our Vulkan app.
     unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
         // MVP
 
-        // let time = self.start.elapsed().as_secs_f32();
-        //
-        // let model = glm::identity();
-        //
-        // // let model = glm::scale(&glm::identity(), &glm::vec3(100.0, 100.0, 1.0));
-        //
-        // let view = glm::look_at(
-        //     &glm::vec3(2.0, 2.0, 2.0),
-        //     &glm::vec3(0.0, 0.0, 0.0),
-        //     &glm::vec3(0.0, 0.0, 1.0),
-        // );
-        //
-        // let view = glm::identity();
-        //
-        // // let proj = glm::ortho_rh_zo(
-        // //     0.0,
-        // //     self.data.swapchain_extent.width as f32,
-        // //     self.data.swapchain_extent.height as f32,
-        // //     0.0,
-        // //     0.1,
-        // //     2.0,
-        // // );
-        //
-        // let mut proj = glm::perspective_rh_zo(
-        //     self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
-        //     glm::radians(&glm::vec1(45.0))[0],
-        //     0.1,
-        //     10.0,
-        // );
-        //
-        // proj[(1, 1)] *= -1.0;
-        //
-        // // let mut proj = glm::ortho_rh_zo(
-        // //     0.0, self.data.swapchain_extent.width as f32, self.data.swapchain_extent.height as f32, 0.0, 0.1, // This sets the depth range from [0, 1] to [-1, 1].
-        // //     21.0,
-        // // );
-        //
-        // let ubo = UniformBufferObject { model, view, proj };
-
         let time = self.start.elapsed().as_secs_f32();
-
-        let model = glm::rotate(
-            &glm::identity(),
-            time * glm::radians(&glm::vec1(90.0))[0],
-            &glm::vec3(0.0, 0.0, 1.0),
-        );
 
         let model = glm::identity();
 
-        let view = glm::look_at(
-            &glm::vec3(0.0, 0.0, -1.0),
-            &glm::vec3(0.0, 0.0, 0.0),
-            &glm::vec3(0.0, -1.0, 0.0),
-        );
+        let view = glm::translate(&glm::identity(), &glm::vec3(0.0, 0.0, -1.0));
 
-        let mut proj = glm::perspective(
-                self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
-                glm::radians(&glm::vec1(45.0))[0],
-                0.1,
-                10.0,
-            );
-
-        // let mut proj = glm::perspective_rh_zo(
-        //     self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
-        //     glm::radians(&glm::vec1(45.0))[0],
-        //     0.1,
-        //     10.0,
-        // );
-
-        proj = glm::ortho_rh_zo(
-            0.0, self.data.swapchain_extent.width as f32, self.data.swapchain_extent.height as f32, 0.0, 0.1, // This sets the depth range from [0, 1] to [-1, 1].
+        let proj = glm::ortho_rh_zo(
+            0.0,
+            self.data.swapchain_extent.width as f32,
+            0.0,
+            self.data.swapchain_extent.height as f32,
+            0.001, // This sets the depth range from [0, 1] to [-1, 1].
             10.0,
         );
 
-        proj[(1, 1)] *= -1.0;
-
         let ubo = UniformBufferObject { model, view, proj };
-
         // Copy
 
         let memory = self.device.map_memory(
@@ -342,6 +642,92 @@ impl App {
 
         self.device
             .unmap_memory(self.data.uniform_buffers_memory[image_index]);
+
+        Ok(())
+    }
+
+    unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
+        let command_buffer = self.data.command_buffers[image_index];
+
+        self.device
+            .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
+
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+        self.device.begin_command_buffer(command_buffer, &info)?;
+
+        let memory_barrier = vk::MemoryBarrier::builder()
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+        self.device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::VERTEX_SHADER,
+            vk::PipelineStageFlags::VERTEX_SHADER,
+            vk::DependencyFlags::empty(),
+            &[memory_barrier],
+            &[] as &[vk::BufferMemoryBarrier],
+            &[] as &[vk::ImageMemoryBarrier],
+        );
+
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(self.data.swapchain_extent);
+
+        let color_clear_value = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
+
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
+
+        let clear_values = &[color_clear_value, depth_clear_value];
+        let info = vk::RenderPassBeginInfo::builder()
+            .render_pass(self.data.render_pass)
+            .framebuffer(self.data.framebuffers[image_index])
+            .render_area(render_area)
+            .clear_values(clear_values);
+
+        self.device
+            .cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
+        self.device.cmd_bind_pipeline(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            self.data.pipeline,
+        );
+        self.device
+            .cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
+        self.device.cmd_bind_index_buffer(
+            command_buffer,
+            self.data.index_buffer,
+            0,
+            vk::IndexType::UINT16,
+        );
+        self.device.cmd_bind_descriptor_sets(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            self.data.pipeline_layout,
+            0,
+            &[self.data.descriptor_sets[image_index]],
+            &[],
+        );
+        self.device.cmd_draw_indexed(
+            command_buffer,
+            INDICES.len() as u32,
+            self.num_active_particles as u32,
+            0,
+            0,
+            0,
+        );
+        self.device.cmd_end_render_pass(command_buffer);
+
+        self.device.end_command_buffer(command_buffer)?;
 
         Ok(())
     }
@@ -372,6 +758,10 @@ impl App {
 
         self.destroy_swapchain();
 
+        self.device.free_memory(self.data.particle_position_storage_buffer_memory, None);
+        self.device.destroy_buffer(self.data.particle_position_storage_buffer, None);
+        self.device.free_memory(self.data.particle_color_storage_buffer_memory, None);
+        self.device.destroy_buffer(self.data.particle_color_storage_buffer, None);
         self.data.in_flight_fences.iter().for_each(|f| self.device.destroy_fence(*f, None));
         self.data.render_finished_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
         self.data.image_available_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
@@ -379,10 +769,6 @@ impl App {
         self.device.destroy_buffer(self.data.index_buffer, None);
         self.device.free_memory(self.data.vertex_buffer_memory, None);
         self.device.destroy_buffer(self.data.vertex_buffer, None);
-        self.device.destroy_sampler(self.data.texture_sampler, None);
-        self.device.destroy_image_view(self.data.texture_image_view, None);
-        self.device.free_memory(self.data.texture_image_memory, None);
-        self.device.destroy_image(self.data.texture_image, None);
         self.device.destroy_command_pool(self.data.command_pool, None);
         self.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
         self.device.destroy_device(None);
@@ -444,11 +830,6 @@ struct AppData {
     depth_image: vk::Image,
     depth_image_memory: vk::DeviceMemory,
     depth_image_view: vk::ImageView,
-    // Texture
-    texture_image: vk::Image,
-    texture_image_memory: vk::DeviceMemory,
-    texture_image_view: vk::ImageView,
-    texture_sampler: vk::Sampler,
     // Buffers
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
@@ -456,6 +837,8 @@ struct AppData {
     index_buffer_memory: vk::DeviceMemory,
     uniform_buffers: Vec<vk::Buffer>,
     uniform_buffers_memory: Vec<vk::DeviceMemory>,
+    uniform_particle_buffers: Vec<vk::Buffer>,
+    uniform_particle_buffers_memory: Vec<vk::DeviceMemory>,
     // Descriptors
     descriptor_pool: vk::DescriptorPool,
     descriptor_sets: Vec<vk::DescriptorSet>,
@@ -466,6 +849,18 @@ struct AppData {
     render_finished_semaphores: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
     images_in_flight: Vec<vk::Fence>,
+    particle_position_storage_buffer: vk::Buffer,
+    particle_position_storage_buffer_memory: vk::DeviceMemory,
+    particle_color_storage_buffer: vk::Buffer,
+    particle_color_storage_buffer_memory: vk::DeviceMemory,
+    particles: Vec<Particle>,
+}
+
+struct InstanceBuffer {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    size: usize,
+    descriptor: vk::DescriptorBufferInfo,
 }
 
 //================================================
@@ -490,8 +885,6 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
         .map(|l| l.layer_name)
         .collect::<HashSet<_>>();
 
-    warn!("{:?}", available_layers);
-
     if VALIDATION_ENABLED && !available_layers.contains(&VALIDATION_LAYER) {
         return Err(anyhow!("Validation layer requested but not supported."));
     }
@@ -502,7 +895,7 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
         return Err(anyhow!("Validation layer requested but not supported."));
     }
 
-    let mut layers = if VALIDATION_ENABLED {
+    let layers = if VALIDATION_ENABLED {
         vec![VALIDATION_LAYER.as_ptr()]
     } else {
         Vec::new()
@@ -510,8 +903,8 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
 
     // layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_LUNARG_api_dump").as_ptr());
     // VK_LAYER_KHRONOS_profiles
-    layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_profiles").as_ptr());
-    layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_synchronization2").as_ptr());
+    // layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_profiles").as_ptr());
+    // layers.push(vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_synchronization2").as_ptr());
     // Extensions
 
     let mut extensions = vk_window::get_required_instance_extensions(window)
@@ -938,7 +1331,24 @@ unsafe fn create_descriptor_set_layout(device: &Device, data: &mut AppData) -> R
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT);
 
-    let bindings = &[ubo_binding, sampler_binding];
+    let storage_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(2)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
+    let storage_color_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(3)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
+    let bindings = &[
+        ubo_binding,
+        sampler_binding,
+        storage_binding,
+        storage_color_binding,
+    ];
     let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
 
     data.descriptor_set_layout = device.create_descriptor_set_layout(&info, None)?;
@@ -1007,7 +1417,7 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
         .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+        .front_face(vk::FrontFace::CLOCKWISE)
         .depth_bias_enable(true);
 
     // Multisample State
@@ -1122,7 +1532,9 @@ unsafe fn create_command_pool(
 ) -> Result<()> {
     let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
 
-    let info = vk::CommandPoolCreateInfo::builder().queue_family_index(indices.graphics);
+    let info = vk::CommandPoolCreateInfo::builder()
+        .queue_family_index(indices.graphics)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
     data.command_pool = device.create_command_pool(&info, None)?;
 
@@ -1215,10 +1627,12 @@ unsafe fn create_texture_image(
     instance: &Instance,
     device: &Device,
     data: &mut AppData,
-) -> Result<()> {
+    file: String,
+    image_handle: vk::Image,
+) -> Result<(vk::Image, vk::DeviceMemory)> {
     // Load
 
-    let image = File::open("resources/texture.png")?;
+    let image = File::open(file.as_str())?;
 
     let decoder = png::Decoder::new(image);
     let mut reader = decoder.read_info()?;
@@ -1262,33 +1676,23 @@ unsafe fn create_texture_image(
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
     )?;
 
-    data.texture_image = texture_image;
-    data.texture_image_memory = texture_image_memory;
-
     // Transition + Copy (image)
 
     transition_image_layout(
         device,
         data,
-        data.texture_image,
+        texture_image,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageLayout::UNDEFINED,
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
     )?;
 
-    copy_buffer_to_image(
-        device,
-        data,
-        staging_buffer,
-        data.texture_image,
-        width,
-        height,
-    )?;
+    copy_buffer_to_image(device, data, staging_buffer, texture_image, width, height)?;
 
     transition_image_layout(
         device,
         data,
-        data.texture_image,
+        texture_image,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
@@ -1299,21 +1703,23 @@ unsafe fn create_texture_image(
     device.destroy_buffer(staging_buffer, None);
     device.free_memory(staging_buffer_memory, None);
 
-    Ok(())
+    Ok((texture_image, texture_image_memory))
 }
 
-unsafe fn create_texture_image_view(device: &Device, data: &mut AppData) -> Result<()> {
-    data.texture_image_view = create_image_view(
+unsafe fn create_texture_image_view(
+    device: &Device,
+    data: &mut AppData,
+    image: vk::Image,
+) -> Result<vk::ImageView> {
+    Ok(create_image_view(
         device,
-        data.texture_image,
+        image,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageAspectFlags::COLOR,
-    )?;
-
-    Ok(())
+    )?)
 }
 
-unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Result<()> {
+unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Result<vk::Sampler> {
     let info = vk::SamplerCreateInfo::builder()
         .mag_filter(vk::Filter::LINEAR)
         .min_filter(vk::Filter::LINEAR)
@@ -1328,9 +1734,7 @@ unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Result<
         .compare_op(vk::CompareOp::ALWAYS)
         .mipmap_mode(vk::SamplerMipmapMode::LINEAR);
 
-    data.texture_sampler = device.create_sampler(&info, None)?;
-
-    Ok(())
+    Ok(device.create_sampler(&info, None)?)
 }
 
 //================================================
@@ -1479,7 +1883,20 @@ unsafe fn create_descriptor_pool(device: &Device, data: &mut AppData) -> Result<
         .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
         .descriptor_count(data.swapchain_images.len() as u32);
 
-    let pool_sizes = &[ubo_size, sampler_size];
+    let particle_position_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(data.swapchain_images.len() as u32);
+
+    let particle_color_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(data.swapchain_images.len() as u32);
+
+    let pool_sizes = &[
+        ubo_size,
+        sampler_size,
+        particle_position_size,
+        particle_color_size,
+    ];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
         .max_sets(data.swapchain_images.len() as u32);
@@ -1515,20 +1932,40 @@ unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Result<
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .buffer_info(buffer_info);
 
-        let info = vk::DescriptorImageInfo::builder()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .image_view(data.texture_image_view)
-            .sampler(data.texture_sampler);
+        let particle_buffer_info = vk::DescriptorBufferInfo::builder()
+            .buffer(data.particle_position_storage_buffer)
+            .offset(0)
+            .range(SIZE_OF_PARTICLE_POSITION);
 
-        let image_info = &[info];
-        let sampler_write = vk::WriteDescriptorSet::builder()
+        let storage_info = &[particle_buffer_info];
+        let storage_buffer_descriptor_write = vk::WriteDescriptorSet::builder()
             .dst_set(data.descriptor_sets[i])
-            .dst_binding(1)
+            .dst_binding(2)
             .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(image_info);
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(storage_info);
 
-        device.update_descriptor_sets(&[ubo_write, sampler_write], &[] as &[vk::CopyDescriptorSet]);
+        let particle_color_buffer_info = vk::DescriptorBufferInfo::builder()
+            .buffer(data.particle_color_storage_buffer)
+            .offset(0)
+            .range(SIZE_OF_PARTICLE_COLOR);
+
+        let storage_color_info = &[particle_color_buffer_info];
+        let storage_color_buffer_descriptor_write = vk::WriteDescriptorSet::builder()
+            .dst_set(data.descriptor_sets[i])
+            .dst_binding(3)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(storage_color_info);
+
+        device.update_descriptor_sets(
+            &[
+                ubo_write,
+                storage_buffer_descriptor_write,
+                storage_color_buffer_descriptor_write,
+            ],
+            &[] as &[vk::CopyDescriptorSet],
+        );
     }
 
     Ok(())
@@ -1547,59 +1984,6 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
         .command_buffer_count(data.framebuffers.len() as u32);
 
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
-
-    // Commands
-
-    for (i, command_buffer) in data.command_buffers.iter().enumerate() {
-        let info = vk::CommandBufferBeginInfo::builder();
-
-        device.begin_command_buffer(*command_buffer, &info)?;
-
-        let render_area = vk::Rect2D::builder()
-            .offset(vk::Offset2D::default())
-            .extent(data.swapchain_extent);
-
-        let color_clear_value = vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: [0.0, 0.0, 0.0, 1.0],
-            },
-        };
-
-        let depth_clear_value = vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue {
-                depth: 1.0,
-                stencil: 0,
-            },
-        };
-
-        let clear_values = &[color_clear_value, depth_clear_value];
-        let info = vk::RenderPassBeginInfo::builder()
-            .render_pass(data.render_pass)
-            .framebuffer(data.framebuffers[i])
-            .render_area(render_area)
-            .clear_values(clear_values);
-
-        device.cmd_begin_render_pass(*command_buffer, &info, vk::SubpassContents::INLINE);
-        device.cmd_bind_pipeline(
-            *command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            data.pipeline,
-        );
-        device.cmd_bind_vertex_buffers(*command_buffer, 0, &[data.vertex_buffer], &[0]);
-        device.cmd_bind_index_buffer(*command_buffer, data.index_buffer, 0, vk::IndexType::UINT16);
-        device.cmd_bind_descriptor_sets(
-            *command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            data.pipeline_layout,
-            0,
-            &[data.descriptor_sets[i]],
-            &[],
-        );
-        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, 1, 0, 0, 0);
-        device.cmd_end_render_pass(*command_buffer);
-
-        device.end_command_buffer(*command_buffer)?;
-    }
 
     Ok(())
 }
@@ -1698,6 +2082,12 @@ impl SwapchainSupport {
                 .get_physical_device_surface_present_modes_khr(physical_device, data.surface)?,
         })
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+struct ParticleBuffer {
+    particle_positions: Vec<glm::Vec2>,
 }
 
 #[repr(C)]
@@ -2029,6 +2419,149 @@ unsafe fn begin_single_time_commands(device: &Device, data: &AppData) -> Result<
     device.begin_command_buffer(command_buffer, &info)?;
 
     Ok(command_buffer)
+}
+
+#[repr(u32)]
+#[derive(Clone, Debug, Default, PartialEq)]
+enum ParticleType {
+    Water,
+    Fire,
+    Lava,
+    Gas,
+    Snow,
+    Sand,
+    #[default]
+    Air,
+    Metal,
+}
+
+impl ParticleType {
+    fn density(&self) -> f32 {
+        match self {
+            ParticleType::Water => 1000.0,
+            ParticleType::Fire => 300.0,
+            ParticleType::Lava => 3100.0,
+            ParticleType::Gas => 1.2,
+            ParticleType::Snow => 200.0,
+            ParticleType::Sand => 1600.0,
+            ParticleType::Air => 1.2,
+            ParticleType::Metal => 10000.0,
+        }
+    }
+
+    fn melting_temperature(&self) -> f32 {
+        match self {
+            ParticleType::Water => 0.0,
+            ParticleType::Fire => 1200.0,
+            ParticleType::Lava => 700.0,
+            ParticleType::Gas => -100.0,
+            ParticleType::Snow => -5.0,
+            ParticleType::Sand => 1400.0,
+            ParticleType::Air => -1.0,
+            ParticleType::Metal => 3200.0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Debug, Default)]
+struct Particle {
+    velocity: glm::Vec2,
+    p_type: ParticleType,
+    air_pressure: f32,
+}
+
+impl Particle {
+    fn new(p_type: ParticleType) -> Self {
+        Particle {
+            velocity: glm::vec2(0.0, 0.0),
+            p_type,
+            air_pressure: 0.0,
+        }
+    }
+}
+
+unsafe fn create_storage_buffer(
+    device: &Device,
+    instance: &Instance,
+    data: &mut AppData,
+) -> Result<()> {
+    data.particles = vec![];
+
+    let buffer_info = vk::BufferCreateInfo::builder()
+        .size(SIZE_OF_PARTICLE_POSITION)
+        .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    data.particle_position_storage_buffer = device.create_buffer(&buffer_info, None)?;
+
+    let mem_requirements =
+        device.get_buffer_memory_requirements(data.particle_position_storage_buffer);
+    let memory_type = find_memory_type(
+        instance,
+        data,
+        mem_requirements.memory_type_bits,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    let alloc_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(mem_requirements.size)
+        .memory_type_index(memory_type);
+
+    data.particle_position_storage_buffer_memory = device.allocate_memory(&alloc_info, None)?;
+
+    device.bind_buffer_memory(
+        data.particle_position_storage_buffer,
+        data.particle_position_storage_buffer_memory,
+        0,
+    )?;
+
+    let buffer_info = vk::BufferCreateInfo::builder()
+        .size(SIZE_OF_PARTICLE_COLOR)
+        .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    data.particle_color_storage_buffer = device.create_buffer(&buffer_info, None)?;
+
+    let mem_requirements =
+        device.get_buffer_memory_requirements(data.particle_color_storage_buffer);
+    let memory_type = find_memory_type(
+        instance,
+        data,
+        mem_requirements.memory_type_bits,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    let alloc_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(mem_requirements.size)
+        .memory_type_index(memory_type);
+
+    data.particle_color_storage_buffer_memory = device.allocate_memory(&alloc_info, None)?;
+
+    device.bind_buffer_memory(
+        data.particle_color_storage_buffer,
+        data.particle_color_storage_buffer_memory,
+        0,
+    )?;
+
+    Ok(())
+}
+
+unsafe fn find_memory_type(
+    instance: &Instance,
+    data: &AppData,
+    type_filter: u32,
+    properties: vk::MemoryPropertyFlags,
+) -> Result<u32, anyhow::Error> {
+    let memory_properties = instance.get_physical_device_memory_properties(data.physical_device);
+
+    for (index, memory_type) in memory_properties.memory_types.iter().enumerate() {
+        if (type_filter & (1 << index)) != 0 && memory_type.property_flags.contains(properties) {
+            return Ok(index as u32);
+        }
+    }
+
+    Err(anyhow!("Failed to find memory type!"))
 }
 
 unsafe fn end_single_time_commands(

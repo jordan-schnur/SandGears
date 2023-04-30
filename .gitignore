@@ -3,3 +3,4 @@
 *.iml
 *.spv
 .DS_STORE
+*.cap

@@ -1,5 +1,6 @@
-
+[![Rustfmt](https://github.com/jordan-schnur/SandGears/actions/workflows/.rustfmt.yml/badge.svg?branch=main)](https://github.com/jordan-schnur/SandGears/actions/workflows/.rustfmt.yml)
 # SandGears
+### Inspired By [Powder Toy](https://powdertoy.co.uk/)
 
 SandGears is an interactive 2D sandbox simulation that allows users to experiment with mechanical contraptions and granular materials like sand. Play around with pistons, hinges, heaters, and more to create unique contraptions and observe their effects on the sand environment.
 
@@ -19,11 +20,13 @@ bash
 
 ### Building and Running
 
-- TODO
+```BASH
+cargo run
+```
 
 ## Contributing
 
-- TODO
+Please check the [Issues](https://github.com/jordan-schnur/SandGears/issues) section for more specific tasks and feature requests.
 
 ## License
 
@@ -31,7 +34,15 @@ This project is licensed under the MIT License - see the [LICENSE.md](https://ch
 
 ## TODOs
 
-- [ ]  Implement basic sand simulation with a 2D grid.
+- [x]  Implement basic sand simulation with a 2D grid.
+- [x]  Add more particles...
+   - [x] Water
+   - [ ] Fire
+   - [ ] Lava
+   - [x] Gas
+   - [ ] Snow
+   - [x] Sand
+- [ ]  Implement text rendering
 - [ ]  Add support for mechanical contraptions (pistons, hinges, etc.).
 - [ ]  Implement a heater that can melt sand.
 - [ ]  Create a user-friendly interface for adding and interacting with contraptions.
@@ -41,5 +52,3 @@ This project is licensed under the MIT License - see the [LICENSE.md](https://ch
 - [ ]  Create a tutorial or demo to help users get started.
 - [ ]  Test on various platforms and fix platform-specific issues.
 - [ ]  Write detailed documentation for users and contributors.
-
-Please check the [Issues](https://github.com/jordan-schnur/SandGears/issues) section for more specific tasks and feature requests.
