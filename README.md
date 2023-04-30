@@ -32,13 +32,15 @@ This project is licensed under the MIT License - see the [LICENSE.md](https://ch
 
 ## TODOs
 
-- [ ]  Implement basic sand simulation with a 2D grid.
-  - [ ] Water
-  - [ ] Fire
-  - [ ] Lava
-  - [ ] Gas
-  - [ ] Snow
-  - [ ] Sand
+- [x]  Implement basic sand simulation with a 2D grid.
+- [ ]  Implement text rendering
+- [ ]  Add more particles...
+      -[ ] Water
+      - [ ] Fire
+      - [ ] Lava
+      - [ ] Gas
+      - [ ] Snow
+      - [ ] Sand
 - [ ]  Add support for mechanical contraptions (pistons, hinges, etc.).
 - [ ]  Implement a heater that can melt sand.
 - [ ]  Create a user-friendly interface for adding and interacting with contraptions.

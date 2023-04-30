@@ -20,7 +20,8 @@ use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use log::*;
 use nalgebra_glm as glm;
-use nalgebra_glm::{e, floor, sin, Vec2, vec2, Vec3, vec3};
+use nalgebra_glm::{e, floor, sin, vec2, vec3, Vec2, Vec3};
+use rand::Rng;
 use thiserror::Error;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::prelude::v1_0::*;
@@ -30,9 +31,8 @@ use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
-use rand::Rng;
 
-use vulkanalia::vk::{ExtDebugUtilsExtension};
+use vulkanalia::vk::ExtDebugUtilsExtension;
 use vulkanalia::vk::KhrSurfaceExtension;
 use vulkanalia::vk::KhrSwapchainExtension;
 
@@ -50,7 +50,7 @@ const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 /// The maximum number of frames that can be processed concurrently.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
-const MAX_PARTICLE_COUNT: usize = 10000;
+const MAX_PARTICLE_COUNT: usize = 100000;
 
 const WIDTH: usize = 1024;
 const HEIGHT: usize = 768;
@@ -76,7 +76,7 @@ const INDICES: &[u16] = &[
 ];
 
 const SIZE_OF_PARTICLE_POSITION: u64 = (std::mem::size_of::<f64>() * 2 * MAX_PARTICLE_COUNT) as u64;
-const SIZE_OF_PARTICLE_COLOR: u64 = (std::mem::size_of::<f64>() * 3 * MAX_PARTICLE_COUNT) as u64;
+const SIZE_OF_PARTICLE_COLOR: u64 = (std::mem::size_of::<u32>() * 1 * MAX_PARTICLE_COUNT) as u64;
 
 #[rustfmt::skip]
 fn main() -> Result<()> {
@@ -119,6 +119,44 @@ fn main() -> Result<()> {
             Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. }, .. } => {
                 app.isMouseButtonDown = false;
             }
+            Event::WindowEvent {
+                event: WindowEvent::KeyboardInput { input, .. },
+                ..
+            } => {
+                if let Some(keycode) = input.virtual_keycode {
+                    use winit::event::VirtualKeyCode;
+                    
+                    if VirtualKeyCode::Escape == keycode {
+                        destroying = true;
+                        *control_flow = ControlFlow::Exit;
+                        unsafe { app.destroy(); }
+                        
+                        return;
+                    }
+
+                    // let particle_type = match keycode {
+                    //     VirtualKeyCode::Key1 => ParticleType::Water,
+                    //     VirtualKeyCode::Key2 => ParticleType::Fire,
+                    //     VirtualKeyCode::Key3 => ParticleType::Lava,
+                    //     VirtualKeyCode::Key4 => ParticleType::Gas,
+                    //     VirtualKeyCode::Key5 => ParticleType::Snow,
+                    //     VirtualKeyCode::Key6 => ParticleType::Sand,
+                    //     VirtualKeyCode::Key7 => ParticleType::Air,
+                    //     _ => return,
+                    // };
+
+                    let particle_type = match keycode {
+                        VirtualKeyCode::Key1 => ParticleType::Water,
+                        VirtualKeyCode::Key2 => ParticleType::Sand,
+                        VirtualKeyCode::Key3 => ParticleType::Air,
+                        _ => return,
+                    };
+                    
+                    info!("Selected {:?}", particle_type);
+
+                    app.currentType = particle_type;
+                }
+            }
             // Destroy our Vulkan app.
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 destroying = true;
@@ -146,7 +184,10 @@ struct App {
     lastFrame: f32,
     fps: f32,
     framesSinceLastSecond: usize,
-    activeParticles: usize,
+    numActiveParticles: usize,
+    activeParticlePositions: Vec<f32>,
+    activeParticleTypes: Vec<u32>,
+    currentType: ParticleType,
 }
 
 impl App {
@@ -185,9 +226,9 @@ impl App {
         for x in 0..WIDTH {
             screen.push(vec![]);
             for y in 0..HEIGHT {
-                screen[x].push( Particle {
-                    velocity: glm::vec2 ( 0.0 ,0.0),
-                    color: glm::vec3 (0.0, 0.0, 0.0),
+                screen[x].push(Particle {
+                    velocity: glm::vec2(0.0, 0.0),
+                    color: glm::vec3(0.0, 0.0, 0.0),
                     p_type: ParticleType::Air,
                 });
             }
@@ -222,7 +263,10 @@ impl App {
             lastFrame: 0 as f32,
             fps: 0 as f32,
             framesSinceLastSecond: 0,
-            activeParticles: 0,
+            numActiveParticles: 0,
+            activeParticlePositions: vec![],
+            activeParticleTypes: vec![],
+            currentType: ParticleType::Sand,
         })
     }
 
@@ -309,7 +353,7 @@ impl App {
             self.lastFrame = now;
 
             info!("FPS: {}", self.fps);
-            info!("Particles: {}", self.activeParticles);
+            info!("Particles: {}", self.numActiveParticles);
         } else {
             self.framesSinceLastSecond += 1;
         }
@@ -324,33 +368,41 @@ impl App {
             return false;
         }
 
+        if y >= 699 {
+            return true;
+        }
+
         return true;
     }
 
     unsafe fn simulate(&mut self) -> Result<()> {
+        self.activeParticlePositions.clear();
+        self.activeParticleTypes.clear();
         let time = self.start.elapsed().as_secs_f32();
 
         const GRAVITY: f32 = 0.01;
-        let mut activeParticles = 0;
-
+        let mut numActiveParticles = 0;
+        const CURSOR_SIZE: usize = 5;
 
         if self.isMouseButtonDown {
             let x: usize = self.mousePosition.x.floor() as usize;
             let y: usize = self.mousePosition.y.floor() as usize;
 
-            if !self.is_cell_filled(x, y) {
-                let newParticle = Particle {
-                    velocity: vec2(0.0, 0.0 ),
-                    color: vec3(1.0, 1.0, 1.0),
-                    p_type: ParticleType::Sand,
-                };
+            for px in 0..CURSOR_SIZE {
+                for py in 0..CURSOR_SIZE {
+                    if !self.is_cell_filled(px + x, py + x) {
+                        let newParticle = Particle {
+                            velocity: vec2(0.0, 0.0),
+                            color: vec3(1.0, 1.0, 1.0),
+                            p_type: self.currentType.clone(),
+                        };
 
-                self.screen[x][y] = newParticle;
-            } else {
-                warn!("Cell is filled at {}, {}", x, y);
+                        self.screen[px + x][py + y] = newParticle;
+                    } else {
+                        warn!("Cell is filled at {}, {}", px + x, py + y);
+                    }
+                }
             }
-
-
         }
 
         let mut updates: Vec<(usize, usize, usize, usize, f32)> = Vec::new();
@@ -360,71 +412,127 @@ impl App {
             for y in 0..self.screen[x].len() {
                 match self.screen[x][y].p_type {
                     ParticleType::Air => continue,
-                    _ => {
+                    ParticleType::Sand => {
                         let mut particle = self.screen[x][y].clone();
-                        activeParticles += 1;
+                        numActiveParticles += 1;
                         if y == 699 {
+                            self.activeParticlePositions.push(x as f32);
+                            self.activeParticlePositions.push(y as f32);
+                            self.activeParticleTypes
+                                .push(particle.p_type.clone() as u32);
+
                             particle.velocity.y = 0.0;
                             self.screen[x][y] = particle;
                             continue;
                         }
 
+                        let mut new_x = x;
+                        let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
 
-                        let mut new_velocity = particle.velocity.y + GRAVITY * time;
+                        if !self.is_cell_filled(new_x, new_y + 1) {
+                            new_y += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if !self.is_cell_filled(new_x - 1, new_y + 1) {
+                            new_y += 1;
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if !self.is_cell_filled(new_x + 1, new_y + 1) {
+                            new_y += 1;
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        }
 
-                        let mut new_y = if y as f32 + new_velocity >= 700.0 {
-                            699
-                        } else {
-                            (y as f32 + new_velocity).floor() as usize
-                        };
+                        self.activeParticlePositions.push(new_x as f32);
+                        self.activeParticlePositions.push(new_y as f32);
+                        self.activeParticleTypes.push(particle.p_type as u32);
+                    }
+                    ParticleType::Water => {
+                        let mut particle = self.screen[x][y].clone();
+                        numActiveParticles += 1;
+                        if y == 699 {
+                            self.activeParticlePositions.push(x as f32);
+                            self.activeParticlePositions.push(y as f32);
+                            self.activeParticleTypes
+                                .push(particle.p_type.clone() as u32);
+
+                            if particle.velocity.y != 0.0 {
+                                particle.velocity.y = 0.0;
+                                self.screen[x][y] = particle;
+                            }
+
+                            continue;
+                        }
 
                         let mut new_x = x;
-                        let below_particle = self.screen[x][y+1].clone();
-                        let mut valid_position = true;
+                        let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
 
-                        if self.is_cell_filled(new_x, new_y) {
-                            valid_position = false;
-                            // if new_velocity >= below_particle.velocity.y {
-                            //     // No collision
-                            //     // warn!("No collsion ");
-                            // } else {
-                            //     if !self.is_cell_filled(new_x, new_y-1) {
-                            //         new_y -= 1;
-                            //     }
-                            //     warn!("Collison ");
-                            // }
-                            if !self.is_cell_filled(new_x, new_y-1) {
-                                new_y -= 1;
+                        if y == 699 {
+                            if !self.is_cell_filled(new_x - 1, new_y) {
+                                new_x -= 1;
+                                updates.push((x, y, new_x, new_y, 0.0));
+                            } else if !self.is_cell_filled(new_x + 1, new_y) {
+                                new_x += 1;
+                                updates.push((x, y, new_x, new_y, 0.0));
                             }
-                        }
 
-                        if valid_position {
-                            let updated_velocity = if new_y >= 699 { 0.0 } else { new_velocity };
-
-                            updates.push((x, y, new_x, new_y, updated_velocity));
+                            self.activeParticlePositions.push(new_x as f32);
+                            self.activeParticlePositions.push(new_y as f32);
+                            self.activeParticleTypes.push(particle.p_type as u32);
                         } else {
-                            let updated_velocity = if new_y >= 699 { 0.0 } else { new_velocity };
-                            particle.velocity.y = updated_velocity;
-                            self.screen[x][y] = particle;
+                            if !self.is_cell_filled(new_x, new_y + 1) {
+                                new_y += 1;
+                                updates.push((x, y, new_x, new_y, 0.0));
+                            } else if !self.is_cell_filled(new_x - 1, new_y + 1) {
+                                new_y += 1;
+                                new_x -= 1;
+                                updates.push((x, y, new_x, new_y, 0.0));
+                            } else if !self.is_cell_filled(new_x + 1, new_y + 1) {
+                                new_y += 1;
+                                new_x += 1;
+                                updates.push((x, y, new_x, new_y, 0.0));
+                            } else if !self.is_cell_filled(new_x - 1, new_y) {
+                                new_x -= 1;
+                                updates.push((x, y, new_x, new_y, 0.0));
+                            } else if !self.is_cell_filled(new_x + 1, new_y) {
+                                new_x += 1;
+                                updates.push((x, y, new_x, new_y, 0.0));
+                            }
+
+                            self.activeParticlePositions.push(new_x as f32);
+                            self.activeParticlePositions.push(new_y as f32);
+                            self.activeParticleTypes.push(particle.p_type as u32);
                         }
+                    }
+                    _ => {
+                        continue;
                     }
                 }
             }
         }
 
         for (old_x, old_y, new_x, new_y, updated_velocity) in updates {
+            if old_x == new_x && old_y == new_y {
+                warn!(
+                    "Same particles. Don't remove from simulation. Old ({}, {}) New ({}, {})",
+                    old_x, old_y, new_x, new_y
+                );
+
+                continue;
+            }
+
             let mut particle = self.screen[old_x][old_y].clone();
+            let mut newParticle = self.screen[new_x][new_y].clone();
             particle.velocity.y = updated_velocity;
-            self.screen[old_x][old_y] = Particle::new(ParticleType::Air);
+            self.screen[old_x][old_y] = newParticle;
             self.screen[new_x][new_y] = particle;
         }
 
-        self.activeParticles = activeParticles;
+        self.numActiveParticles = numActiveParticles;
         Ok(())
     }
 
     unsafe fn update_storage_buffers(&mut self, image_index: usize) -> Result<()> {
-        if self.activeParticles == 0 {
+        if self.numActiveParticles == 0 {
             return Ok(());
         }
 
@@ -433,69 +541,46 @@ impl App {
         let mut data_ptr = self.device.map_memory(
             self.data.particle_position_storage_buffer_memory,
             0,
-            (self.activeParticles * std::mem::size_of::<f32>() * 2) as u64,
-            vk::MemoryMapFlags::empty()
+            (self.numActiveParticles * std::mem::size_of::<f32>() * 2) as u64,
+            vk::MemoryMapFlags::empty(),
         )?;
 
-        let positions: Vec<f32> = self.screen
-            .iter()
-            .enumerate()
-            .flat_map(|(i, row)| {
-                row.iter()
-                    .enumerate()
-                    .filter(|(_, particle)| particle.p_type != ParticleType::Air)
-                    .flat_map(move |(j, _)| vec![i as f32, j as f32])
-            })
-            .collect();
-
-
-        // let mut positions: Vec<Vec2> = self.data.particles
-        //     .iter()
-        //     .map(|particle| vec2(particle.position.x, particle.position.y))
-        //     .collect();
-        //
-        // let positions_f64: Vec<f32> = positions
-        //     .iter()
-        //     .flat_map(|v| vec![v.x as f32, v.y as f32])
-        //     .collect();
-        //
-        let (prefix, aligned, suffix) = positions.align_to::<f32>();
+        let (prefix, aligned, suffix) = self.activeParticlePositions.align_to::<f32>();
 
         if !prefix.is_empty() || !suffix.is_empty() {
             return Err(anyhow!("Particles are not properly aligned."));
         }
 
-        std::ptr::copy_nonoverlapping(aligned.as_ptr(), data_ptr.cast(), self.activeParticles * 2);
+        std::ptr::copy_nonoverlapping(
+            aligned.as_ptr(),
+            data_ptr.cast(),
+            self.numActiveParticles * 2,
+        );
 
-        self.device.unmap_memory(self.data.particle_position_storage_buffer_memory);
+        self.device
+            .unmap_memory(self.data.particle_position_storage_buffer_memory);
 
-        // let mut data_ptr_2 = self.device.map_memory(
-        //     self.data.particle_color_storage_buffer_memory,
-        //     0,
-        //     ( * std::mem::size_of::<f32>() * 3) as u64,
-        //     vk::MemoryMapFlags::empty()
-        // )?;
-        //
-        // let mut colors: Vec<Vec3> = self.data.particles
-        //     .iter()
-        //     .map(|particle| vec3(particle.color.x, particle.color.y, particle.color.z))
-        //     .collect();
-        //
-        // let colors_f64: Vec<f32> = colors
-        //     .iter()
-        //     .flat_map(|v| vec![v.x as f32, v.y as f32, v.z as f32])
-        //     .collect();
-        //
-        // let (prefix, aligned2, suffix) = colors_f64.align_to::<f32>();
-        //
-        // if !prefix.is_empty() || !suffix.is_empty() {
-        //     return Err(anyhow!("Particles are not properly aligned."));
-        // }
-        //
-        // // memcpy(&colors, data_ptr_2.cast(), 1);
-        // std::ptr::copy_nonoverlapping(aligned2.as_ptr(), data_ptr_2.cast(), active_particle_count * 3);
-        //
-        // self.device.unmap_memory(self.data.particle_color_storage_buffer_memory);
+        let mut data_ptr_2 = self.device.map_memory(
+            self.data.particle_color_storage_buffer_memory,
+            0,
+            (self.numActiveParticles * std::mem::size_of::<u32>()) as u64,
+            vk::MemoryMapFlags::empty(),
+        )?;
+
+        let (prefix, aligned2, suffix) = self.activeParticleTypes.align_to::<u32>();
+
+        if !prefix.is_empty() || !suffix.is_empty() {
+            return Err(anyhow!("Particles are not properly aligned."));
+        }
+
+        std::ptr::copy_nonoverlapping(
+            aligned2.as_ptr(),
+            data_ptr_2.cast(),
+            self.numActiveParticles,
+        );
+
+        self.device
+            .unmap_memory(self.data.particle_color_storage_buffer_memory);
 
         Ok(())
     }
@@ -504,60 +589,27 @@ impl App {
     unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
         // MVP
 
-        // let time = self.start.elapsed().as_secs_f32();
-        //
-        // let model = glm::identity();
-        //
-        // // let model = glm::scale(&glm::identity(), &glm::vec3(100.0, 100.0, 1.0));
-        //
-        // let view = glm::look_at(
-        //     &glm::vec3(2.0, 2.0, 2.0),
-        //     &glm::vec3(0.0, 0.0, 0.0),
-        //     &glm::vec3(0.0, 0.0, 1.0),
-        // );
-        //
-        // let view = glm::identity();
-        //
-        // // let proj = glm::ortho_rh_zo(
-        // //     0.0,
-        // //     self.data.swapchain_extent.width as f32,
-        // //     self.data.swapchain_extent.height as f32,
-        // //     0.0,
-        // //     0.1,
-        // //     2.0,
-        // // );
-        //
-        // let mut proj = glm::perspective_rh_zo(
-        //     self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
-        //     glm::radians(&glm::vec1(45.0))[0],
-        //     0.1,
-        //     10.0,
-        // );
-        //
-        // proj[(1, 1)] *= -1.0;
-        //
-        // // let mut proj = glm::ortho_rh_zo(
-        // //     0.0, self.data.swapchain_extent.width as f32, self.data.swapchain_extent.height as f32, 0.0, 0.1, // This sets the depth range from [0, 1] to [-1, 1].
-        // //     21.0,
-        // // );
-        //
-        // let ubo = UniformBufferObject { model, view, proj };
-
         let time = self.start.elapsed().as_secs_f32();
 
         let model = glm::identity();
 
-        let view = glm::translate(
-            &glm::identity(),
-            &glm::vec3(0.0, 0.0, -1.0),
-        );
+        // let model = glm::scale(
+        //     &glm::identity(),
+        //     &glm::vec3(2.0, 2.0, 2.0)
+        // );
+
+        let view = glm::translate(&glm::identity(), &glm::vec3(0.0, 0.0, -1.0));
 
         let proj = glm::ortho_rh_zo(
-            0.0, self.data.swapchain_extent.width as f32, 0.0, self.data.swapchain_extent.height as f32, 0.001, // This sets the depth range from [0, 1] to [-1, 1].
+            0.0,
+            self.data.swapchain_extent.width as f32,
+            0.0,
+            self.data.swapchain_extent.height as f32,
+            0.001, // This sets the depth range from [0, 1] to [-1, 1].
             10.0,
         );
 
-         let ubo = UniformBufferObject { model, view, proj };
+        let ubo = UniformBufferObject { model, view, proj };
         // Copy
 
         let memory = self.device.map_memory(
@@ -578,15 +630,13 @@ impl App {
     unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
         let command_buffer = self.data.command_buffers[image_index];
 
-        self.device.reset_command_buffer(
-            command_buffer,
-            vk::CommandBufferResetFlags::empty(),
-        )?;
+        self.device
+            .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
 
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
-       self.device.begin_command_buffer(command_buffer, &info)?;
+        self.device.begin_command_buffer(command_buffer, &info)?;
 
         let memory_barrier = vk::MemoryBarrier::builder()
             .src_access_mask(vk::AccessFlags::SHADER_WRITE)
@@ -625,14 +675,21 @@ impl App {
             .render_area(render_area)
             .clear_values(clear_values);
 
-        self.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
+        self.device
+            .cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
         self.device.cmd_bind_pipeline(
             command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
             self.data.pipeline,
         );
-        self.device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
-        self.device.cmd_bind_index_buffer(command_buffer, self.data.index_buffer, 0, vk::IndexType::UINT16);
+        self.device
+            .cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
+        self.device.cmd_bind_index_buffer(
+            command_buffer,
+            self.data.index_buffer,
+            0,
+            vk::IndexType::UINT16,
+        );
         self.device.cmd_bind_descriptor_sets(
             command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
@@ -641,7 +698,14 @@ impl App {
             &[self.data.descriptor_sets[image_index]],
             &[],
         );
-        self.device.cmd_draw_indexed(command_buffer, INDICES.len() as u32, self.activeParticles as u32, 0, 0, 0);
+        self.device.cmd_draw_indexed(
+            command_buffer,
+            INDICES.len() as u32,
+            self.numActiveParticles as u32,
+            0,
+            0,
+            0,
+        );
         self.device.cmd_end_render_pass(command_buffer);
 
         self.device.end_command_buffer(command_buffer)?;
@@ -1269,7 +1333,12 @@ unsafe fn create_descriptor_set_layout(device: &Device, data: &mut AppData) -> R
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::VERTEX);
 
-    let bindings = &[ubo_binding, sampler_binding, storage_binding, storage_color_binding];
+    let bindings = &[
+        ubo_binding,
+        sampler_binding,
+        storage_binding,
+        storage_color_binding,
+    ];
     let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
 
     data.descriptor_set_layout = device.create_descriptor_set_layout(&info, None)?;
@@ -1820,7 +1889,12 @@ unsafe fn create_descriptor_pool(device: &Device, data: &mut AppData) -> Result<
         .type_(vk::DescriptorType::STORAGE_BUFFER)
         .descriptor_count(data.swapchain_images.len() as u32);
 
-    let pool_sizes = &[ubo_size, sampler_size, particle_position_size, particle_color_size];
+    let pool_sizes = &[
+        ubo_size,
+        sampler_size,
+        particle_position_size,
+        particle_color_size,
+    ];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
         .max_sets(data.swapchain_images.len() as u32);
@@ -1895,7 +1969,15 @@ unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Result<
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .buffer_info(storage_color_info);
 
-        device.update_descriptor_sets(&[ubo_write, sampler_write, storage_buffer_descriptor_write, storage_color_buffer_descriptor_write], &[] as &[vk::CopyDescriptorSet]);
+        device.update_descriptor_sets(
+            &[
+                ubo_write,
+                sampler_write,
+                storage_buffer_descriptor_write,
+                storage_color_buffer_descriptor_write,
+            ],
+            &[] as &[vk::CopyDescriptorSet],
+        );
     }
 
     Ok(())
@@ -2351,15 +2433,15 @@ unsafe fn begin_single_time_commands(device: &Device, data: &AppData) -> Result<
     Ok(command_buffer)
 }
 
-#[repr(C)]
+#[repr(u32)]
 #[derive(Clone, Debug, Default, PartialEq)]
 enum ParticleType {
- Water,
-Fire,
-Lava,
-Gas,
-Snow,
-Sand,
+    Water,
+    Fire,
+    Lava,
+    Gas,
+    Snow,
+    Sand,
     #[default]
     Air,
 }
@@ -2392,12 +2474,16 @@ impl Particle {
         Particle {
             velocity: vec2(0.0, 0.0),
             color: vec3(0.0, 0.0, 0.0),
-            p_type
+            p_type,
         }
     }
 }
 
-unsafe fn create_storage_buffer(device: &Device, instance: &Instance, data: &mut AppData) -> Result<()> {
+unsafe fn create_storage_buffer(
+    device: &Device,
+    instance: &Instance,
+    data: &mut AppData,
+) -> Result<()> {
     data.particles = vec![];
 
     let buffer_info = vk::BufferCreateInfo::builder()
@@ -2407,8 +2493,14 @@ unsafe fn create_storage_buffer(device: &Device, instance: &Instance, data: &mut
 
     data.particle_position_storage_buffer = device.create_buffer(&buffer_info, None)?;
 
-    let mem_requirements = device.get_buffer_memory_requirements(data.particle_position_storage_buffer);
-    let memory_type = find_memory_type(instance, data, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)?;
+    let mem_requirements =
+        device.get_buffer_memory_requirements(data.particle_position_storage_buffer);
+    let memory_type = find_memory_type(
+        instance,
+        data,
+        mem_requirements.memory_type_bits,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
 
     let alloc_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(mem_requirements.size)
@@ -2416,7 +2508,11 @@ unsafe fn create_storage_buffer(device: &Device, instance: &Instance, data: &mut
 
     data.particle_position_storage_buffer_memory = device.allocate_memory(&alloc_info, None)?;
 
-    device.bind_buffer_memory(data.particle_position_storage_buffer, data.particle_position_storage_buffer_memory, 0)?;
+    device.bind_buffer_memory(
+        data.particle_position_storage_buffer,
+        data.particle_position_storage_buffer_memory,
+        0,
+    )?;
 
     let buffer_info = vk::BufferCreateInfo::builder()
         .size(SIZE_OF_PARTICLE_COLOR)
@@ -2425,8 +2521,14 @@ unsafe fn create_storage_buffer(device: &Device, instance: &Instance, data: &mut
 
     data.particle_color_storage_buffer = device.create_buffer(&buffer_info, None)?;
 
-    let mem_requirements = device.get_buffer_memory_requirements(data.particle_color_storage_buffer);
-    let memory_type = find_memory_type(instance, data, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)?;
+    let mem_requirements =
+        device.get_buffer_memory_requirements(data.particle_color_storage_buffer);
+    let memory_type = find_memory_type(
+        instance,
+        data,
+        mem_requirements.memory_type_bits,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
 
     let alloc_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(mem_requirements.size)
@@ -2434,12 +2536,21 @@ unsafe fn create_storage_buffer(device: &Device, instance: &Instance, data: &mut
 
     data.particle_color_storage_buffer_memory = device.allocate_memory(&alloc_info, None)?;
 
-    device.bind_buffer_memory(data.particle_color_storage_buffer, data.particle_color_storage_buffer_memory, 0)?;
+    device.bind_buffer_memory(
+        data.particle_color_storage_buffer,
+        data.particle_color_storage_buffer_memory,
+        0,
+    )?;
 
     Ok(())
 }
 
-unsafe fn find_memory_type(instance: &Instance, data: &AppData, type_filter: u32, properties: vk::MemoryPropertyFlags) -> Result<u32, anyhow::Error> {
+unsafe fn find_memory_type(
+    instance: &Instance,
+    data: &AppData,
+    type_filter: u32,
+    properties: vk::MemoryPropertyFlags,
+) -> Result<u32, anyhow::Error> {
     let memory_properties = instance.get_physical_device_memory_properties(data.physical_device);
 
     for (index, memory_type) in memory_properties.memory_types.iter().enumerate() {
