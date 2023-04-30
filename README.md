@@ -3,6 +3,7 @@
 ### Inspired By [Powder Toy](https://powdertoy.co.uk/)
 
 SandGears is an interactive 2D sandbox simulation that allows users to experiment with mechanical contraptions and granular materials like sand. Play around with pistons, hinges, heaters, and more to create unique contraptions and observe their effects on the sand environment.
+![Intro Gif](intro.gif)
 
 ## Getting Started
 
