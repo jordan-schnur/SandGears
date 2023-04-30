@@ -7,20 +7,19 @@
     clippy::unnecessary_wraps
 )]
 
-use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::fs::File;
 use std::mem::size_of;
 use std::os::raw::c_void;
-use std::ptr::{copy_nonoverlapping as memcpy, copy_nonoverlapping};
+use std::ptr::copy_nonoverlapping as memcpy;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use log::*;
 use nalgebra_glm as glm;
-use nalgebra_glm::{e, floor, sin, vec2, vec3, Vec2, Vec3};
+use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 use rand::Rng;
 use thiserror::Error;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
@@ -111,13 +110,13 @@ fn main() -> Result<()> {
                 }
             }
             Event::WindowEvent { event: WindowEvent::CursorMoved { device_id: _, position, .. }, .. } => {
-                app.mousePosition = vec2(position.x as f32, position.y as f32);
+                app.mouse_position = vec2(position.x as f32, position.y as f32);
             }
             Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }, .. } => {
-                app.isMouseButtonDown = true;
+                app.is_mouse_button_down = true;
             }
             Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. }, .. } => {
-                app.isMouseButtonDown = false;
+                app.is_mouse_button_down = false;
             }
             Event::WindowEvent {
                 event: WindowEvent::KeyboardInput { input, .. },
@@ -164,7 +163,7 @@ fn main() -> Result<()> {
                     
                     info!("Selected {:?}", particle_type);
 
-                    app.currentType = particle_type;
+                    app.current_type = particle_type;
                 }
             }
             // Destroy our Vulkan app.
@@ -188,16 +187,16 @@ struct App {
     frame: usize,
     resized: bool,
     start: Instant,
-    mousePosition: Vec2,
-    isMouseButtonDown: bool,
+    mouse_position: Vec2,
+    is_mouse_button_down: bool,
     screen: Vec<Vec<Particle>>,
-    lastFrame: f32,
+    last_frame: f32,
     fps: f32,
-    framesSinceLastSecond: usize,
-    numActiveParticles: usize,
-    activeParticlePositions: Vec<f32>,
-    activeParticleTypes: Vec<u32>,
-    currentType: ParticleType,
+    frames_since_last_second: usize,
+    num_active_particles: usize,
+    active_particle_positions: Vec<f32>,
+    active_particle_types: Vec<u32>,
+    current_type: ParticleType,
     paused: bool,
 }
 
@@ -268,16 +267,16 @@ impl App {
             frame: 0,
             resized: false,
             start: Instant::now(),
-            mousePosition: vec2(0.0, 0.0),
-            isMouseButtonDown: false,
+            mouse_position: vec2(0.0, 0.0),
+            is_mouse_button_down: false,
             screen,
-            lastFrame: 0 as f32,
+            last_frame: 0 as f32,
             fps: 0 as f32,
-            framesSinceLastSecond: 0,
-            numActiveParticles: 0,
-            activeParticlePositions: vec![],
-            activeParticleTypes: vec![],
-            currentType: ParticleType::Sand,
+            frames_since_last_second: 0,
+            num_active_particles: 0,
+            active_particle_positions: vec![],
+            active_particle_types: vec![],
+            current_type: ParticleType::Sand,
             paused: false,
         })
     }
@@ -312,7 +311,7 @@ impl App {
 
         self.update_command_buffer(image_index)?;
         self.update_uniform_buffer(image_index)?;
-        self.addParticles();
+        self.add_particles();
 
         if !self.paused {
             self.simulate()?;
@@ -364,15 +363,15 @@ impl App {
     fn calc_fps(&mut self) {
         let now = self.start.elapsed().as_secs_f32();
 
-        if (now - self.lastFrame) >= 1.0 {
-            self.fps = self.framesSinceLastSecond as f32;
-            self.framesSinceLastSecond = 0;
-            self.lastFrame = now;
+        if (now - self.last_frame) >= 1.0 {
+            self.fps = self.frames_since_last_second as f32;
+            self.frames_since_last_second = 0;
+            self.last_frame = now;
 
             info!("FPS: {}", self.fps);
-            info!("Particles: {}", self.numActiveParticles);
+            info!("Particles: {}", self.num_active_particles);
         } else {
-            self.framesSinceLastSecond += 1;
+            self.frames_since_last_second += 1;
         }
     }
 
@@ -397,37 +396,37 @@ impl App {
             return false;
         }
 
-        let testCell = &self.screen[x][y].p_type;
+        let test_cell = &self.screen[x][y].p_type;
 
-        if testCell == &ParticleType::Air {
+        if test_cell == &ParticleType::Air {
             return true;
         }
 
-        if p_type.density() > testCell.density() {
+        if p_type.density() > test_cell.density() {
             return true;
         }
 
         return false;
     }
 
-    unsafe fn addParticles(&mut self) {
+    unsafe fn add_particles(&mut self) {
         const CURSOR_SIZE: usize = 5;
 
-        if self.isMouseButtonDown {
-            let x: usize = self.mousePosition.x.floor() as usize;
-            let y: usize = self.mousePosition.y.floor() as usize;
-            let pType = self.currentType.clone();
+        if self.is_mouse_button_down {
+            let x: usize = self.mouse_position.x.floor() as usize;
+            let y: usize = self.mouse_position.y.floor() as usize;
+            let p_type = self.current_type.clone();
 
             for px in 0..CURSOR_SIZE {
                 for py in 0..CURSOR_SIZE {
-                    if self.can_move(&pType, px + x, py + x) {
-                        let newParticle = Particle {
+                    if self.can_move(&p_type, px + x, py + x) {
+                        let new_particle = Particle {
                             velocity: vec2(0.0, 0.0),
                             color: vec3(1.0, 1.0, 1.0),
-                            p_type: self.currentType.clone(),
+                            p_type: self.current_type.clone(),
                         };
 
-                        self.screen[px + x][py + y] = newParticle;
+                        self.screen[px + x][py + y] = new_particle;
                     }
                 }
             }
@@ -435,12 +434,12 @@ impl App {
     }
 
     unsafe fn simulate(&mut self) -> Result<()> {
-        self.activeParticlePositions.clear();
-        self.activeParticleTypes.clear();
+        self.active_particle_positions.clear();
+        self.active_particle_types.clear();
         let time = self.start.elapsed().as_secs_f32();
 
         const GRAVITY: f32 = 0.01;
-        let mut numActiveParticles = 0;
+        let mut num_active_particles = 0;
 
         let mut updates: Vec<(usize, usize, usize, usize, f32)> = Vec::new();
         let mut rng = rand::thread_rng();
@@ -451,11 +450,11 @@ impl App {
                     ParticleType::Air => continue,
                     ParticleType::Sand => {
                         let mut particle = self.screen[x][y].clone();
-                        numActiveParticles += 1;
+                        num_active_particles += 1;
                         if y == 699 {
-                            self.activeParticlePositions.push(x as f32);
-                            self.activeParticlePositions.push(y as f32);
-                            self.activeParticleTypes
+                            self.active_particle_positions.push(x as f32);
+                            self.active_particle_positions.push(y as f32);
+                            self.active_particle_types
                                 .push(particle.p_type.clone() as u32);
 
                             particle.velocity.y = 0.0;
@@ -463,34 +462,34 @@ impl App {
                             continue;
                         }
 
-                        let pType = &ParticleType::Sand;
+                        let p_type = &ParticleType::Sand;
                         let mut new_x = x;
                         let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
 
-                        if self.can_move(pType, new_x, new_y + 1) {
+                        if self.can_move(p_type, new_x, new_y + 1) {
                             new_y += 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if self.can_move(pType, new_x - 1, new_y + 1) {
+                        } else if self.can_move(p_type, new_x - 1, new_y + 1) {
                             new_y += 1;
                             new_x -= 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if self.can_move(pType, new_x + 1, new_y + 1) {
+                        } else if self.can_move(p_type, new_x + 1, new_y + 1) {
                             new_y += 1;
                             new_x += 1;
                             updates.push((x, y, new_x, new_y, 0.0));
                         }
 
-                        self.activeParticlePositions.push(new_x as f32);
-                        self.activeParticlePositions.push(new_y as f32);
-                        self.activeParticleTypes.push(particle.p_type as u32);
+                        self.active_particle_positions.push(new_x as f32);
+                        self.active_particle_positions.push(new_y as f32);
+                        self.active_particle_types.push(particle.p_type as u32);
                     }
                     ParticleType::Water => {
                         let mut particle = self.screen[x][y].clone();
-                        numActiveParticles += 1;
+                        num_active_particles += 1;
                         if y == 699 {
-                            self.activeParticlePositions.push(x as f32);
-                            self.activeParticlePositions.push(y as f32);
-                            self.activeParticleTypes
+                            self.active_particle_positions.push(x as f32);
+                            self.active_particle_positions.push(y as f32);
+                            self.active_particle_types
                                 .push(particle.p_type.clone() as u32);
 
                             if particle.velocity.y != 0.0 {
@@ -501,18 +500,18 @@ impl App {
                             continue;
                         }
 
-                        let pType = &ParticleType::Water;
+                        let p_type = &ParticleType::Water;
                         let mut new_x = x;
                         let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
 
-                        if self.can_move(pType, new_x, new_y + 1) {
+                        if self.can_move(p_type, new_x, new_y + 1) {
                             new_y += 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if self.can_move(pType, new_x - 1, new_y + 1) {
+                        } else if self.can_move(p_type, new_x - 1, new_y + 1) {
                             new_y += 1;
                             new_x -= 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if self.can_move(pType, new_x + 1, new_y + 1) {
+                        } else if self.can_move(p_type, new_x + 1, new_y + 1) {
                             new_y += 1;
                             new_x += 1;
                             updates.push((x, y, new_x, new_y, 0.0));
@@ -520,54 +519,54 @@ impl App {
 
                         let random_direction = rng.gen_range(-1..2);
 
-                        if random_direction == -1 && self.can_move(pType, new_x - 1, new_y) {
+                        if random_direction == -1 && self.can_move(p_type, new_x - 1, new_y) {
                             new_x -= 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if random_direction == 1 && self.can_move(pType, new_x + 1, new_y) {
+                        } else if random_direction == 1 && self.can_move(p_type, new_x + 1, new_y) {
                             new_x += 1;
                             updates.push((x, y, new_x, new_y, 0.0));
                         }
 
-                        self.activeParticlePositions.push(new_x as f32);
-                        self.activeParticlePositions.push(new_y as f32);
-                        self.activeParticleTypes.push(particle.p_type as u32);
+                        self.active_particle_positions.push(new_x as f32);
+                        self.active_particle_positions.push(new_y as f32);
+                        self.active_particle_types.push(particle.p_type as u32);
                     }
                     ParticleType::Gas => {
-                        let mut particle = self.screen[x][y].clone();
-                        numActiveParticles += 1;
+                        let particle = self.screen[x][y].clone();
+                        num_active_particles += 1;
 
-                        let pType = &ParticleType::Gas;
+                        let p_type = &ParticleType::Gas;
                         let mut new_x = x;
                         let mut new_y = y;
 
-                        if self.can_move(pType, new_x, new_y - 1) {
+                        if self.can_move(p_type, new_x, new_y - 1) {
                             new_y -= 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if self.can_move(pType, new_x - 1, new_y - 1) {
+                        } else if self.can_move(p_type, new_x - 1, new_y - 1) {
                             new_y -= 1;
                             new_x -= 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if self.can_move(pType, new_x + 1, new_y - 1) {
+                        } else if self.can_move(p_type, new_x + 1, new_y - 1) {
                             new_y -= 1;
                             new_x += 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if self.can_move(pType, new_x - 1, new_y) {
+                        } else if self.can_move(p_type, new_x - 1, new_y) {
                             new_x -= 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if self.can_move(pType, new_x + 1, new_y) {
+                        } else if self.can_move(p_type, new_x + 1, new_y) {
                             new_x += 1;
                             updates.push((x, y, new_x, new_y, 0.0));
                         }
 
-                        self.activeParticlePositions.push(new_x as f32);
-                        self.activeParticlePositions.push(new_y as f32);
-                        self.activeParticleTypes.push(particle.p_type as u32);
+                        self.active_particle_positions.push(new_x as f32);
+                        self.active_particle_positions.push(new_y as f32);
+                        self.active_particle_types.push(particle.p_type as u32);
                     }
                     ParticleType::Metal => {
-                        numActiveParticles += 1;
-                        self.activeParticlePositions.push(x as f32);
-                        self.activeParticlePositions.push(y as f32);
-                        self.activeParticleTypes.push(ParticleType::Metal as u32);
+                        num_active_particles += 1;
+                        self.active_particle_positions.push(x as f32);
+                        self.active_particle_positions.push(y as f32);
+                        self.active_particle_types.push(ParticleType::Metal as u32);
                     }
                     _ => {
                         continue;
@@ -587,31 +586,31 @@ impl App {
             }
 
             let mut particle = self.screen[old_x][old_y].clone();
-            let mut newParticle = self.screen[new_x][new_y].clone();
+            let new_particle = self.screen[new_x][new_y].clone();
             particle.velocity.y = updated_velocity;
-            self.screen[old_x][old_y] = newParticle;
+            self.screen[old_x][old_y] = new_particle;
             self.screen[new_x][new_y] = particle;
         }
 
-        self.numActiveParticles = numActiveParticles;
+        self.num_active_particles = num_active_particles;
         Ok(())
     }
 
     unsafe fn update_storage_buffers(&mut self, image_index: usize) -> Result<()> {
-        if self.numActiveParticles == 0 {
+        if self.num_active_particles == 0 {
             return Ok(());
         }
 
         let time = self.start.elapsed().as_secs_f32();
 
-        let mut data_ptr = self.device.map_memory(
+        let data_ptr = self.device.map_memory(
             self.data.particle_position_storage_buffer_memory,
             0,
-            (self.numActiveParticles * std::mem::size_of::<f32>() * 2) as u64,
+            (self.num_active_particles * std::mem::size_of::<f32>() * 2) as u64,
             vk::MemoryMapFlags::empty(),
         )?;
 
-        let (prefix, aligned, suffix) = self.activeParticlePositions.align_to::<f32>();
+        let (prefix, aligned, suffix) = self.active_particle_positions.align_to::<f32>();
 
         if !prefix.is_empty() || !suffix.is_empty() {
             return Err(anyhow!("Particles are not properly aligned."));
@@ -620,20 +619,20 @@ impl App {
         std::ptr::copy_nonoverlapping(
             aligned.as_ptr(),
             data_ptr.cast(),
-            self.numActiveParticles * 2,
+            self.num_active_particles * 2,
         );
 
         self.device
             .unmap_memory(self.data.particle_position_storage_buffer_memory);
 
-        let mut data_ptr_2 = self.device.map_memory(
+        let data_ptr_2 = self.device.map_memory(
             self.data.particle_color_storage_buffer_memory,
             0,
-            (self.numActiveParticles * std::mem::size_of::<u32>()) as u64,
+            (self.num_active_particles * std::mem::size_of::<u32>()) as u64,
             vk::MemoryMapFlags::empty(),
         )?;
 
-        let (prefix, aligned2, suffix) = self.activeParticleTypes.align_to::<u32>();
+        let (prefix, aligned2, suffix) = self.active_particle_types.align_to::<u32>();
 
         if !prefix.is_empty() || !suffix.is_empty() {
             return Err(anyhow!("Particles are not properly aligned."));
@@ -642,7 +641,7 @@ impl App {
         std::ptr::copy_nonoverlapping(
             aligned2.as_ptr(),
             data_ptr_2.cast(),
-            self.numActiveParticles,
+            self.num_active_particles,
         );
 
         self.device
@@ -767,7 +766,7 @@ impl App {
         self.device.cmd_draw_indexed(
             command_buffer,
             INDICES.len() as u32,
-            self.numActiveParticles as u32,
+            self.num_active_particles as u32,
             0,
             0,
             0,
@@ -951,7 +950,7 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
         return Err(anyhow!("Validation layer requested but not supported."));
     }
 
-    let mut layers = if VALIDATION_ENABLED {
+    let layers = if VALIDATION_ENABLED {
         vec![VALIDATION_LAYER.as_ptr()]
     } else {
         Vec::new()
