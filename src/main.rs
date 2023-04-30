@@ -126,12 +126,20 @@ fn main() -> Result<()> {
                 if let Some(keycode) = input.virtual_keycode {
                     use winit::event::VirtualKeyCode;
                     
+                    if input.state != ElementState::Pressed {
+                        return;
+                    }
+                    
                     if VirtualKeyCode::Escape == keycode {
                         destroying = true;
                         *control_flow = ControlFlow::Exit;
                         unsafe { app.destroy(); }
                         
                         return;
+                    }
+                    
+                    if VirtualKeyCode::Space == keycode {
+                        app.paused = !app.paused;
                     }
 
                     // let particle_type = match keycode {
@@ -148,7 +156,9 @@ fn main() -> Result<()> {
                     let particle_type = match keycode {
                         VirtualKeyCode::Key1 => ParticleType::Water,
                         VirtualKeyCode::Key2 => ParticleType::Sand,
-                        VirtualKeyCode::Key3 => ParticleType::Air,
+                        VirtualKeyCode::Key3 => ParticleType::Gas,
+                        VirtualKeyCode::Key4 => ParticleType::Metal,
+                        VirtualKeyCode::Key5 => ParticleType::Air,
                         _ => return,
                     };
                     
@@ -188,6 +198,7 @@ struct App {
     activeParticlePositions: Vec<f32>,
     activeParticleTypes: Vec<u32>,
     currentType: ParticleType,
+    paused: bool,
 }
 
 impl App {
@@ -267,6 +278,7 @@ impl App {
             activeParticlePositions: vec![],
             activeParticleTypes: vec![],
             currentType: ParticleType::Sand,
+            paused: false,
         })
     }
 
@@ -300,7 +312,12 @@ impl App {
 
         self.update_command_buffer(image_index)?;
         self.update_uniform_buffer(image_index)?;
-        self.simulate()?;
+        self.addParticles();
+
+        if !self.paused {
+            self.simulate()?;
+        }
+
         self.update_storage_buffers(image_index)?;
 
         self.calc_fps();
@@ -360,7 +377,7 @@ impl App {
     }
 
     unsafe fn is_cell_filled(&self, x: usize, y: usize) -> bool {
-        if x < 0 || x > WIDTH - 1 || y < 0 || y > HEIGHT {
+        if x < 1 || x > WIDTH - 1 || y < 1 || y > HEIGHT {
             return true;
         }
 
@@ -375,22 +392,35 @@ impl App {
         return true;
     }
 
-    unsafe fn simulate(&mut self) -> Result<()> {
-        self.activeParticlePositions.clear();
-        self.activeParticleTypes.clear();
-        let time = self.start.elapsed().as_secs_f32();
+    unsafe fn can_move(&self, p_type: &ParticleType, x: usize, y: usize) -> bool {
+        if x < 1 || x > WIDTH - 2 || y < 1 || y > HEIGHT - 2 || y >= 699 {
+            return false;
+        }
 
-        const GRAVITY: f32 = 0.01;
-        let mut numActiveParticles = 0;
+        let testCell = &self.screen[x][y].p_type;
+
+        if testCell == &ParticleType::Air {
+            return true;
+        }
+
+        if p_type.density() > testCell.density() {
+            return true;
+        }
+
+        return false;
+    }
+
+    unsafe fn addParticles(&mut self) {
         const CURSOR_SIZE: usize = 5;
 
         if self.isMouseButtonDown {
             let x: usize = self.mousePosition.x.floor() as usize;
             let y: usize = self.mousePosition.y.floor() as usize;
+            let pType = self.currentType.clone();
 
             for px in 0..CURSOR_SIZE {
                 for py in 0..CURSOR_SIZE {
-                    if !self.is_cell_filled(px + x, py + x) {
+                    if self.can_move(&pType, px + x, py + x) {
                         let newParticle = Particle {
                             velocity: vec2(0.0, 0.0),
                             color: vec3(1.0, 1.0, 1.0),
@@ -398,12 +428,19 @@ impl App {
                         };
 
                         self.screen[px + x][py + y] = newParticle;
-                    } else {
-                        warn!("Cell is filled at {}, {}", px + x, py + y);
                     }
                 }
             }
         }
+    }
+
+    unsafe fn simulate(&mut self) -> Result<()> {
+        self.activeParticlePositions.clear();
+        self.activeParticleTypes.clear();
+        let time = self.start.elapsed().as_secs_f32();
+
+        const GRAVITY: f32 = 0.01;
+        let mut numActiveParticles = 0;
 
         let mut updates: Vec<(usize, usize, usize, usize, f32)> = Vec::new();
         let mut rng = rand::thread_rng();
@@ -426,17 +463,18 @@ impl App {
                             continue;
                         }
 
+                        let pType = &ParticleType::Sand;
                         let mut new_x = x;
                         let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
 
-                        if !self.is_cell_filled(new_x, new_y + 1) {
+                        if self.can_move(pType, new_x, new_y + 1) {
                             new_y += 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if !self.is_cell_filled(new_x - 1, new_y + 1) {
+                        } else if self.can_move(pType, new_x - 1, new_y + 1) {
                             new_y += 1;
                             new_x -= 1;
                             updates.push((x, y, new_x, new_y, 0.0));
-                        } else if !self.is_cell_filled(new_x + 1, new_y + 1) {
+                        } else if self.can_move(pType, new_x + 1, new_y + 1) {
                             new_y += 1;
                             new_x += 1;
                             updates.push((x, y, new_x, new_y, 0.0));
@@ -463,45 +501,73 @@ impl App {
                             continue;
                         }
 
+                        let pType = &ParticleType::Water;
                         let mut new_x = x;
                         let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
 
-                        if y == 699 {
-                            if !self.is_cell_filled(new_x - 1, new_y) {
-                                new_x -= 1;
-                                updates.push((x, y, new_x, new_y, 0.0));
-                            } else if !self.is_cell_filled(new_x + 1, new_y) {
-                                new_x += 1;
-                                updates.push((x, y, new_x, new_y, 0.0));
-                            }
-
-                            self.activeParticlePositions.push(new_x as f32);
-                            self.activeParticlePositions.push(new_y as f32);
-                            self.activeParticleTypes.push(particle.p_type as u32);
-                        } else {
-                            if !self.is_cell_filled(new_x, new_y + 1) {
-                                new_y += 1;
-                                updates.push((x, y, new_x, new_y, 0.0));
-                            } else if !self.is_cell_filled(new_x - 1, new_y + 1) {
-                                new_y += 1;
-                                new_x -= 1;
-                                updates.push((x, y, new_x, new_y, 0.0));
-                            } else if !self.is_cell_filled(new_x + 1, new_y + 1) {
-                                new_y += 1;
-                                new_x += 1;
-                                updates.push((x, y, new_x, new_y, 0.0));
-                            } else if !self.is_cell_filled(new_x - 1, new_y) {
-                                new_x -= 1;
-                                updates.push((x, y, new_x, new_y, 0.0));
-                            } else if !self.is_cell_filled(new_x + 1, new_y) {
-                                new_x += 1;
-                                updates.push((x, y, new_x, new_y, 0.0));
-                            }
-
-                            self.activeParticlePositions.push(new_x as f32);
-                            self.activeParticlePositions.push(new_y as f32);
-                            self.activeParticleTypes.push(particle.p_type as u32);
+                        if self.can_move(pType, new_x, new_y + 1) {
+                            new_y += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(pType, new_x - 1, new_y + 1) {
+                            new_y += 1;
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(pType, new_x + 1, new_y + 1) {
+                            new_y += 1;
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
                         }
+
+                        let random_direction = rng.gen_range(-1..2);
+
+                        if random_direction == -1 && self.can_move(pType, new_x - 1, new_y) {
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if random_direction == 1 && self.can_move(pType, new_x + 1, new_y) {
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        }
+
+                        self.activeParticlePositions.push(new_x as f32);
+                        self.activeParticlePositions.push(new_y as f32);
+                        self.activeParticleTypes.push(particle.p_type as u32);
+                    }
+                    ParticleType::Gas => {
+                        let mut particle = self.screen[x][y].clone();
+                        numActiveParticles += 1;
+
+                        let pType = &ParticleType::Gas;
+                        let mut new_x = x;
+                        let mut new_y = y;
+
+                        if self.can_move(pType, new_x, new_y - 1) {
+                            new_y -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(pType, new_x - 1, new_y - 1) {
+                            new_y -= 1;
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(pType, new_x + 1, new_y - 1) {
+                            new_y -= 1;
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(pType, new_x - 1, new_y) {
+                            new_x -= 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        } else if self.can_move(pType, new_x + 1, new_y) {
+                            new_x += 1;
+                            updates.push((x, y, new_x, new_y, 0.0));
+                        }
+
+                        self.activeParticlePositions.push(new_x as f32);
+                        self.activeParticlePositions.push(new_y as f32);
+                        self.activeParticleTypes.push(particle.p_type as u32);
+                    }
+                    ParticleType::Metal => {
+                        numActiveParticles += 1;
+                        self.activeParticlePositions.push(x as f32);
+                        self.activeParticlePositions.push(y as f32);
+                        self.activeParticleTypes.push(ParticleType::Metal as u32);
                     }
                     _ => {
                         continue;
@@ -2444,6 +2510,35 @@ enum ParticleType {
     Sand,
     #[default]
     Air,
+    Metal,
+}
+
+impl ParticleType {
+    fn density(&self) -> f32 {
+        match self {
+            ParticleType::Water => 1000.0,
+            ParticleType::Fire => 300.0,
+            ParticleType::Lava => 3100.0,
+            ParticleType::Gas => 1.2,
+            ParticleType::Snow => 200.0,
+            ParticleType::Sand => 1600.0,
+            ParticleType::Air => 1.2,
+            ParticleType::Metal => 10000.0,
+        }
+    }
+
+    fn melting_temperature(&self) -> f32 {
+        match self {
+            ParticleType::Water => 0.0,
+            ParticleType::Fire => 1200.0,
+            ParticleType::Lava => 700.0,
+            ParticleType::Gas => -100.0,
+            ParticleType::Snow => -5.0,
+            ParticleType::Sand => 1400.0,
+            ParticleType::Air => -1.0,
+            ParticleType::Metal => 3200.0,
+        }
+    }
 }
 
 #[repr(C)]

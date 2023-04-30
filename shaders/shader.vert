@@ -9,14 +9,15 @@ layout(binding = 3) buffer ColorBuffer {
     uint color_type[]; // Changed from "type[]"
 };
 
-const vec4 COLORS[7] = {
+const vec4 COLORS[8] = {
 vec4(0.0, 0.5, 1.0, 1.0), // Water: Blue
 vec4(1.0, 0.0, 0.0, 1.0), // Fire: Red
 vec4(1.0, 0.5, 0.0, 1.0), // Lava: Orange
 vec4(0.8, 0.8, 0.0, 1.0), // Gas: Yellow
 vec4(1.0, 1.0, 1.0, 1.0), // Snow: White
 vec4(0.9, 0.6, 0.3, 1.0), // Sand: Light Brown
-vec4(0.0, 0.0, 0.0, 0.0)  // Air: Transparent (or whatever color you want for Air)
+vec4(0.0, 0.0, 0.0, 0.0), // Air: Transparent (or whatever color you want for Air)
+vec4(0.6667, 0.6627, 0.6784, 0.0)  // Metal: Silver (Metallic) / #aaa9ad Hex Color Code
 };
 
 layout(binding = 0) uniform UniformBufferObject {
