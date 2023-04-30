@@ -405,17 +405,14 @@ impl App {
         const GRAVITY: f32 = 0.01;
         let mut num_active_particles = 0;
 
-        let mut updates: Vec<
-            (usize, usize, 
-             usize, usize,
-             f32)> = Vec::new();
+        let mut updates: Vec<(usize, usize, usize, usize, f32)> = Vec::new();
         let mut rng = rand::thread_rng();
 
         for x in 0..self.screen.len() {
-            for y           in 0..self.screen[x].len() {
+            for y in 0..self.screen[x].len() {
                 match self.screen[x][y].p_type {
-                                        ParticleType::Air => continue,
-                                    ParticleType::Sand => {
+                    ParticleType::Air => continue,
+                    ParticleType::Sand => {
                         let mut particle = self.screen[x][y].clone();
                         num_active_particles += 1;
                         if y == 699 {
