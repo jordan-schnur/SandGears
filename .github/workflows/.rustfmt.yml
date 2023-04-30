@@ -1,33 +1,25 @@
 name: Rustfmt
 
 on:
+  pull_request:
   push:
     branches:
       - main
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - closed
 
 jobs:
   rustfmt:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true || github.event_name != 'pull_request'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Install Rust
+      - name: Set up Rust
         uses: actions-rs/toolchain@v1
         with:
-          profile: minimal
           toolchain: stable
           components: rustfmt
           override: true
 
-      - name: Run rustfmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+      - name: Format Rust code
+        run: cargo fmt -- --check
