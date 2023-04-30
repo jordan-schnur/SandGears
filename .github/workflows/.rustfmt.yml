@@ -1,12 +1,15 @@
 name: Rustfmt
 
 on:
-  pull_request:
-    branches:
-      - '**'
   push:
     branches:
       - main
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - closed
+
 jobs:
   rustfmt:
     runs-on: ubuntu-latest
