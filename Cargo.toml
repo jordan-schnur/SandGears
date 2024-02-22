@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Error handling
-anyhow = "1"
+anyhow = "1.0"
 # used to store static data like vertices
 lazy_static = "1"
 # used for logging statements
@@ -15,13 +15,13 @@ nalgebra-glm = "0.18"
 # used to load PNGs as textures
 png = "0.17"
 # used to print our logs to console
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 # used to define custom error types without boilerplate
 thiserror = "1"
-# used to load 3d .obj models
-tobj = { version = "3", features = ["log"] }
 # used to create a window to render to
-vulkanalia = { version = "=0.18.0", features = ["libloading", "provisional", "window"] }
-winit = "0.28"
-rand = "0.8.5"
-image = "0.24.6"
+winit = "0.28.0"
+rand = "0.8"
+raw-window-handle = "0.5"
+image = "0.24"
+ash = { path = "../ash/ash", default-features = false, features = ["linked", "debug"] }
+ash-window = { path = "../ash/ash-window" }
