@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-glium = "0.34"
-winit = "0.29"
+gl = "0.14.0"
+glutin = "0.28.0"
