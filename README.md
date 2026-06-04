@@ -5,6 +5,37 @@
 SandGears is an interactive 2D sandbox simulation that allows users to experiment with mechanical contraptions and granular materials like sand. Play around with pistons, hinges, heaters, and more to create unique contraptions and observe their effects on the sand environment.
 <img alt="intro gif" align="left" width="100" height="200" src="https://raw.githubusercontent.com/jordan-schnur/SandGears/main/intro.gif">
 
+## Architecture
+
+SandGears is built on **Storm Cloud**, a small 2D particle engine that lives in
+[`src/stormcloud`](src/stormcloud). Storm Cloud owns all of the Vulkan and
+windowing boilerplate so that game code can be written in plain, **safe** Rust —
+every `unsafe` block is confined to the engine's renderer.
+
+To build something on the engine you only:
+
+1. implement the `stormcloud::Game` trait (its `update` method runs once per frame),
+2. read user input from the `Input` snapshot you are handed, and
+3. push the particles you want drawn into the `Frame`.
+
+Then hand your game to `Engine::run`, which creates the window, brings up Vulkan,
+runs the main loop and uploads your particles to the GPU. The SandGears
+simulation itself is exactly such a `Game`, implemented in
+[`src/game.rs`](src/game.rs) with no `unsafe`.
+
+### Controls
+
+| Input            | Action              |
+| ---------------- | ------------------- |
+| Left mouse drag  | Paint particles     |
+| `1`              | Select Water        |
+| `2`              | Select Sand         |
+| `3`              | Select Gas          |
+| `4`              | Select Metal        |
+| `5`              | Select Air (eraser) |
+| `Space`          | Pause / resume      |
+| `Esc`            | Quit                |
+
 ## Getting Started
 
 To get started with SandGears, clone the repository and follow the instructions for building and running the project on your platform.
