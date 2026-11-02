@@ -4,24 +4,30 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Error handling
+# Error handling with `?` and context messages
 anyhow = "1"
-# used to store static data like vertices
-lazy_static = "1"
-# used for logging statements
+# Window icon decoding (PNG only)
+image = { version = "0.24.6", default-features = false, features = ["png"] }
+# Logging facade + a pretty console logger (set RUST_LOG=info to see output)
 log = "0.4"
-# Replacement for GLM
-nalgebra-glm = "0.18"
-# used to load PNGs as textures
-png = "0.17"
-# used to print our logs to console
 pretty_env_logger = "0.4"
-# used to define custom error types without boilerplate
-thiserror = "1"
-# used to load 3d .obj models
-tobj = { version = "3", features = ["log"] }
-# used to create a window to render to
-vulkanalia = { version = "=0.18.0", features = ["libloading", "provisional", "window"] }
-winit = "0.28"
+# Randomness for the simulation (which way water flows, grain colour variation, ...)
 rand = "0.8.5"
-image = "0.24.6"
+# Vulkan bindings
+vulkanalia = { version = "=0.18.0", features = ["libloading", "provisional", "window"] }
+# Window + input
+winit = "0.28"
+
+[build-dependencies]
+# Compiles the GLSL shaders in `shaders/` to SPIR-V at build time, so no Vulkan SDK
+# (`glslc`) is needed just to build the game.
+# (`wgsl-in` is unused, but naga 30's `glsl-in` fails to compile without it.)
+naga = { version = "30", features = ["glsl-in", "spv-out", "wgsl-in"] }
+
+# The simulation loops over every cell every tick; unoptimised builds are too slow
+# to be fun, so optimise even `cargo run` (debug) builds.
+[profile.dev]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 3
