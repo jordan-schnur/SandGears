@@ -26,7 +26,7 @@ use vulkanalia::prelude::v1_0::*;
 use vulkanalia::window as vk_window;
 use vulkanalia::Version;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, Event, MouseButton, WindowEvent};
+use winit::event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
 
@@ -55,6 +55,35 @@ const MAX_PARTICLE_COUNT: usize = 100000;
 
 const WIDTH: usize = 1024;
 const HEIGHT: usize = 768;
+
+/// Rows at the top of the grid reserved for the material toolbar; particles never enter them.
+const TOOLBAR_HEIGHT: usize = 40;
+const BUTTON_WIDTH: usize = 96;
+const BUTTON_HEIGHT: usize = 26;
+const BUTTON_MARGIN: usize = 8;
+/// Each font pixel is drawn as a GLYPH_SCALE x GLYPH_SCALE square.
+const GLYPH_SCALE: usize = 3;
+
+/// Side length of the square brush, in cells.
+const BRUSH_SIZE: usize = 5;
+const MIN_ZOOM: f32 = 1.0;
+const MAX_ZOOM: f32 = 8.0;
+
+/// Color indices past the particle types, matching the COLORS table in shader.vert.
+const UI_COLOR_TOOLBAR: u32 = 8;
+const UI_COLOR_SELECTED: u32 = 9;
+const UI_COLOR_DARK_TEXT: u32 = 10;
+const UI_COLOR_LIGHT_TEXT: u32 = 11;
+const UI_COLOR_ERASER: u32 = 12;
+
+/// Toolbar buttons in display order. Air is the eraser.
+const MATERIAL_BUTTONS: [(ParticleType, &str); 5] = [
+    (ParticleType::Water, "WATER"),
+    (ParticleType::Sand, "SAND"),
+    (ParticleType::Gas, "GAS"),
+    (ParticleType::Metal, "METAL"),
+    (ParticleType::Air, "ERASE"),
+];
 
 lazy_static! {
     #[rustfmt::skip]
@@ -123,10 +152,45 @@ fn main() -> Result<()> {
                 }
             }
             Event::WindowEvent { event: WindowEvent::CursorMoved { device_id: _, position, .. }, .. } => {
-                app.mouse_position = glm::vec2(position.x as f32, position.y as f32);
+                // The grid is stretched over the whole window, so convert physical pixels to grid cells.
+                let size = window.inner_size();
+                let new_position = glm::vec2(
+                    position.x as f32 / size.width.max(1) as f32 * WIDTH as f32,
+                    position.y as f32 / size.height.max(1) as f32 * HEIGHT as f32,
+                );
+
+                if app.is_panning {
+                    let delta = new_position - app.mouse_position;
+                    app.pan(-delta);
+                }
+
+                app.mouse_position = new_position;
+                app.cursor_in_window = true;
+            }
+            Event::WindowEvent { event: WindowEvent::CursorLeft { .. }, .. } => {
+                app.cursor_in_window = false;
+            }
+            // A mouse wheel zooms. A trackpad's two-finger scroll pans and its pinch zooms,
+            // matching how macOS apps usually treat the two.
+            Event::WindowEvent { event: WindowEvent::MouseWheel { delta, .. }, .. } => match delta {
+                MouseScrollDelta::LineDelta(_, y) => app.zoom_at_mouse(1.1_f32.powf(y)),
+                MouseScrollDelta::PixelDelta(d) => {
+                    let scale = WIDTH as f32 / window.inner_size().width.max(1) as f32;
+                    app.pan(glm::vec2(-d.x as f32, -d.y as f32) * scale);
+                }
+            },
+            Event::WindowEvent { event: WindowEvent::TouchpadMagnify { delta, .. }, .. } => {
+                app.zoom_at_mouse(1.0 + delta as f32);
+            }
+            Event::WindowEvent { event: WindowEvent::MouseInput { state, button: MouseButton::Right, .. }, .. } => {
+                app.is_panning = state == ElementState::Pressed;
             }
             Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }, .. } => {
-                app.is_mouse_button_down = true;
+                if (app.mouse_position.y as usize) < TOOLBAR_HEIGHT {
+                    app.click_toolbar();
+                } else {
+                    app.is_mouse_button_down = true;
+                }
             }
             Event::WindowEvent { event: WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. }, .. } => {
                 app.is_mouse_button_down = false;
@@ -163,9 +227,7 @@ fn main() -> Result<()> {
                         _ => return,
                     };
 
-                    info!("Selected {:?}", particle_type);
-
-                    app.current_type = particle_type;
+                    app.select_type(particle_type);
                 }
             }
             // Destroy our Vulkan app.
@@ -198,6 +260,17 @@ struct App {
     num_active_particles: usize,
     active_particle_positions: Vec<f32>,
     active_particle_types: Vec<u32>,
+    ui_positions: Vec<f32>,
+    ui_types: Vec<u32>,
+    cursor_positions: Vec<f32>,
+    cursor_types: Vec<u32>,
+    num_instances: usize,
+    /// How many screen cells one grid cell covers.
+    zoom: f32,
+    /// Grid position shown at the top-left corner of the window.
+    view_offset: glm::Vec2,
+    is_panning: bool,
+    cursor_in_window: bool,
     current_type: ParticleType,
     paused: bool,
 }
@@ -238,7 +311,7 @@ impl App {
             }
         }
 
-        Ok(Self {
+        let mut app = Self {
             entry,
             instance,
             data,
@@ -255,9 +328,161 @@ impl App {
             num_active_particles: 0,
             active_particle_positions: vec![],
             active_particle_types: vec![],
+            ui_positions: vec![],
+            ui_types: vec![],
+            cursor_positions: vec![],
+            cursor_types: vec![],
+            num_instances: 0,
+            zoom: MIN_ZOOM,
+            view_offset: glm::vec2(0.0, 0.0),
+            is_panning: false,
+            cursor_in_window: false,
             current_type: ParticleType::Sand,
             paused: false,
-        })
+        };
+
+        app.build_toolbar();
+
+        Ok(app)
+    }
+
+    /// The grid cell under the mouse, accounting for zoom and pan.
+    fn mouse_world(&self) -> glm::Vec2 {
+        self.view_offset + self.mouse_position / self.zoom
+    }
+
+    fn zoom_at_mouse(&mut self, factor: f32) {
+        // Keep the cell under the mouse fixed while the scale changes.
+        let anchor = self.mouse_world();
+        self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        self.view_offset = anchor - self.mouse_position / self.zoom;
+        self.clamp_view();
+    }
+
+    /// Moves the view by a distance in screen cells.
+    fn pan(&mut self, screen_delta: glm::Vec2) {
+        self.view_offset += screen_delta / self.zoom;
+        self.clamp_view();
+    }
+
+    /// Keeps the visible region inside the grid so you can't scroll into empty space.
+    fn clamp_view(&mut self) {
+        let max_x = WIDTH as f32 - WIDTH as f32 / self.zoom;
+        let max_y = HEIGHT as f32 - HEIGHT as f32 / self.zoom;
+        self.view_offset.x = self.view_offset.x.clamp(0.0, max_x);
+        self.view_offset.y = self.view_offset.y.clamp(0.0, max_y);
+    }
+
+    /// The brush's top-left cell, centered on the mouse.
+    fn brush_origin(&self) -> (isize, isize) {
+        let mouse = self.mouse_world();
+        let half = (BRUSH_SIZE / 2) as isize;
+        (mouse.x.floor() as isize - half, mouse.y.floor() as isize - half)
+    }
+
+    /// Outlines the cells the brush will paint. Rebuilt every frame since it follows the mouse.
+    fn build_cursor(&mut self) {
+        self.cursor_positions.clear();
+        self.cursor_types.clear();
+
+        if !self.cursor_in_window || (self.mouse_position.y as usize) < TOOLBAR_HEIGHT || self.is_panning {
+            return;
+        }
+
+        let (x, y) = self.brush_origin();
+        let (x, y) = (x as f32, y as f32);
+        let size = BRUSH_SIZE as u32;
+        // The outline sits just outside the brush so it doesn't hide what's being painted.
+        let edges = [
+            (x - 1.0, y - 1.0, size + 2, 1),
+            (x - 1.0, y + size as f32, size + 2, 1),
+            (x - 1.0, y, 1, size),
+            (x + size as f32, y, 1, size),
+        ];
+
+        for (ex, ey, w, h) in edges {
+            self.cursor_positions.push(ex);
+            self.cursor_positions.push(ey);
+            self.cursor_types.push(pack_instance(UI_COLOR_SELECTED, w, h, false));
+        }
+    }
+
+    fn select_type(&mut self, particle_type: ParticleType) {
+        info!("Selected {:?}", particle_type);
+
+        self.current_type = particle_type;
+        self.build_toolbar();
+    }
+
+    fn click_toolbar(&mut self) {
+        let x = self.mouse_position.x as usize;
+        let y = self.mouse_position.y as usize;
+
+        if y < BUTTON_MARGIN || y >= BUTTON_MARGIN + BUTTON_HEIGHT {
+            return;
+        }
+
+        for (i, (p_type, _)) in MATERIAL_BUTTONS.iter().enumerate() {
+            let button_x = button_x(i);
+
+            if x >= button_x && x < button_x + BUTTON_WIDTH {
+                self.select_type(p_type.clone());
+                return;
+            }
+        }
+    }
+
+    /// Rebuilds the toolbar's rectangles. They only change when the selection does.
+    fn build_toolbar(&mut self) {
+        self.ui_positions.clear();
+        self.ui_types.clear();
+
+        self.push_rect(0, 0, WIDTH, TOOLBAR_HEIGHT, UI_COLOR_TOOLBAR);
+
+        let button_y = BUTTON_MARGIN;
+
+        for (i, (p_type, label)) in MATERIAL_BUTTONS.iter().enumerate() {
+            let button_x = button_x(i);
+
+            // Later instances draw over earlier ones, so the highlight goes first as a frame.
+            if *p_type == self.current_type {
+                self.push_rect(button_x - 2, button_y - 2, BUTTON_WIDTH + 4, BUTTON_HEIGHT + 4, UI_COLOR_SELECTED);
+            }
+
+            let (fill, text) = match p_type {
+                ParticleType::Air => (UI_COLOR_ERASER, UI_COLOR_LIGHT_TEXT),
+                _ => (p_type.clone() as u32, UI_COLOR_DARK_TEXT),
+            };
+
+            self.push_rect(button_x, button_y, BUTTON_WIDTH, BUTTON_HEIGHT, fill);
+
+            let glyph_advance = 4 * GLYPH_SCALE;
+            let text_width = label.len() * glyph_advance - GLYPH_SCALE;
+            let text_x = button_x + (BUTTON_WIDTH - text_width) / 2;
+            let text_y = button_y + (BUTTON_HEIGHT - 5 * GLYPH_SCALE) / 2;
+
+            for (c, ch) in label.chars().enumerate() {
+                for (row, bits) in glyph(ch).iter().enumerate() {
+                    for col in 0..3 {
+                        if bits & (0b100 >> col) != 0 {
+                            self.push_rect(
+                                text_x + c * glyph_advance + col * GLYPH_SCALE,
+                                text_y + row * GLYPH_SCALE,
+                                GLYPH_SCALE,
+                                GLYPH_SCALE,
+                                text,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn push_rect(&mut self, x: usize, y: usize, width: usize, height: usize, color: u32) {
+        self.ui_positions.push(x as f32);
+        self.ui_positions.push(y as f32);
+        self.ui_types.push(pack_instance(color, width as u32, height as u32, true));
     }
 
     /// Renders a frame for our Vulkan app.
@@ -288,7 +513,6 @@ impl App {
 
         self.data.images_in_flight[image_index] = in_flight_fence;
 
-        self.update_command_buffer(image_index)?;
         self.update_uniform_buffer(image_index)?;
         self.add_particles();
 
@@ -299,6 +523,8 @@ impl App {
         }
 
         self.update_storage_buffers(image_index)?;
+        // Recorded after the upload so the draw uses this frame's instance count.
+        self.update_command_buffer(image_index)?;
 
         self.calc_fps();
 
@@ -373,7 +599,7 @@ impl App {
     }
 
     unsafe fn can_move(&self, p_type: &ParticleType, x: usize, y: usize) -> bool {
-        if x < 1 || x > WIDTH - 2 || y < 1 || y > HEIGHT - 2 || y >= 699 {
+        if !in_sim_bounds(x, y) {
             return false;
         }
 
@@ -391,23 +617,35 @@ impl App {
     }
 
     unsafe fn add_particles(&mut self) {
-        const CURSOR_SIZE: usize = 5;
-
         if self.is_mouse_button_down {
-            let x: usize = self.mouse_position.x.floor() as usize;
-            let y: usize = self.mouse_position.y.floor() as usize;
+            let (origin_x, origin_y) = self.brush_origin();
             let p_type = self.current_type.clone();
+            // Air is lighter than everything, so can_move would never let the eraser replace anything.
+            let erasing = p_type == ParticleType::Air;
 
-            for px in 0..CURSOR_SIZE {
-                for py in 0..CURSOR_SIZE {
-                    if self.can_move(&p_type, px + x, py + x) {
+            for px in 0..BRUSH_SIZE as isize {
+                for py in 0..BRUSH_SIZE as isize {
+                    let (cx, cy) = (origin_x + px, origin_y + py);
+
+                    if cx < 0 || cy < 0 {
+                        continue;
+                    }
+
+                    let (cx, cy) = (cx as usize, cy as usize);
+                    let placeable = if erasing {
+                        in_sim_bounds(cx, cy)
+                    } else {
+                        self.can_move(&p_type, cx, cy)
+                    };
+
+                    if placeable {
                         let new_particle = Particle {
                             velocity: glm::vec2(0.0, 0.0),
                             p_type: self.current_type.clone(),
                             air_pressure: 0.0,
                         };
 
-                        self.screen[px + x][py + y] = new_particle;
+                        self.screen[cx][cy] = new_particle;
                     }
                 }
             }
@@ -455,22 +693,12 @@ impl App {
                 match self.screen[x][y].p_type {
                     ParticleType::Air => continue,
                     ParticleType::Sand => {
-                        let mut particle = self.screen[x][y].clone();
+                        let particle = self.screen[x][y].clone();
                         num_active_particles += 1;
-                        if y == 699 {
-                            self.active_particle_positions.push(x as f32);
-                            self.active_particle_positions.push(y as f32);
-                            self.active_particle_types
-                                .push(particle.p_type.clone() as u32);
-
-                            particle.velocity.y = 0.0;
-                            self.screen[x][y] = particle;
-                            continue;
-                        }
 
                         let p_type = &ParticleType::Sand;
                         let mut new_x = x;
-                        let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
+                        let mut new_y = y;
 
                         if self.can_move(p_type, new_x, new_y + 1) {
                             new_y += 1;
@@ -490,25 +718,12 @@ impl App {
                         self.active_particle_types.push(particle.p_type as u32);
                     }
                     ParticleType::Water => {
-                        let mut particle = self.screen[x][y].clone();
+                        let particle = self.screen[x][y].clone();
                         num_active_particles += 1;
-                        if y == 699 {
-                            self.active_particle_positions.push(x as f32);
-                            self.active_particle_positions.push(y as f32);
-                            self.active_particle_types
-                                .push(particle.p_type.clone() as u32);
-
-                            if particle.velocity.y != 0.0 {
-                                particle.velocity.y = 0.0;
-                                self.screen[x][y] = particle;
-                            }
-
-                            continue;
-                        }
 
                         let p_type = &ParticleType::Water;
                         let mut new_x = x;
-                        let mut new_y = if y as f32 >= 700.0 { 699 } else { y };
+                        let mut new_y = y;
 
                         if self.can_move(p_type, new_x, new_y + 1) {
                             new_y += 1;
@@ -598,51 +813,56 @@ impl App {
     }
 
     unsafe fn update_storage_buffers(&mut self, image_index: usize) -> Result<()> {
-        if self.num_active_particles == 0 {
-            return Ok(());
-        }
+        self.build_cursor();
 
-        let time = self.start.elapsed().as_secs_f32();
+        // The color buffer holds exactly MAX_PARTICLE_COUNT entries; anything past that would
+        // write out of bounds, so only particles are ever dropped. Instances draw in order:
+        // particles, then the brush outline, then the toolbar on top of anything zoomed under it.
+        let num_ui = self.ui_types.len();
+        let num_cursor = self.cursor_types.len();
+        let num_particles = self
+            .active_particle_types
+            .len()
+            .min(MAX_PARTICLE_COUNT - num_ui - num_cursor);
+        self.num_instances = num_particles + num_cursor + num_ui;
 
-        let data_ptr = self.device.map_memory(
+        let positions = self.device.map_memory(
             self.data.particle_position_storage_buffer_memory,
             0,
-            (self.num_active_particles * std::mem::size_of::<f32>() * 2) as u64,
+            (self.num_instances * std::mem::size_of::<f32>() * 2) as u64,
             vk::MemoryMapFlags::empty(),
         )?;
 
-        let (prefix, aligned, suffix) = self.active_particle_positions.align_to::<f32>();
-
-        if !prefix.is_empty() || !suffix.is_empty() {
-            return Err(anyhow!("Particles are not properly aligned."));
-        }
-
+        let positions: *mut f32 = positions.cast();
+        std::ptr::copy_nonoverlapping(self.active_particle_positions.as_ptr(), positions, num_particles * 2);
         std::ptr::copy_nonoverlapping(
-            aligned.as_ptr(),
-            data_ptr.cast(),
-            self.num_active_particles * 2,
+            self.cursor_positions.as_ptr(),
+            positions.add(num_particles * 2),
+            num_cursor * 2,
+        );
+        std::ptr::copy_nonoverlapping(
+            self.ui_positions.as_ptr(),
+            positions.add((num_particles + num_cursor) * 2),
+            num_ui * 2,
         );
 
         self.device
             .unmap_memory(self.data.particle_position_storage_buffer_memory);
 
-        let data_ptr_2 = self.device.map_memory(
+        let types = self.device.map_memory(
             self.data.particle_color_storage_buffer_memory,
             0,
-            (self.num_active_particles * std::mem::size_of::<u32>()) as u64,
+            (self.num_instances * std::mem::size_of::<u32>()) as u64,
             vk::MemoryMapFlags::empty(),
         )?;
 
-        let (prefix, aligned2, suffix) = self.active_particle_types.align_to::<u32>();
-
-        if !prefix.is_empty() || !suffix.is_empty() {
-            return Err(anyhow!("Particles are not properly aligned."));
-        }
-
+        let types: *mut u32 = types.cast();
+        std::ptr::copy_nonoverlapping(self.active_particle_types.as_ptr(), types, num_particles);
+        std::ptr::copy_nonoverlapping(self.cursor_types.as_ptr(), types.add(num_particles), num_cursor);
         std::ptr::copy_nonoverlapping(
-            aligned2.as_ptr(),
-            data_ptr_2.cast(),
-            self.num_active_particles,
+            self.ui_types.as_ptr(),
+            types.add(num_particles + num_cursor),
+            num_ui,
         );
 
         self.device
@@ -657,15 +877,18 @@ impl App {
 
         let time = self.start.elapsed().as_secs_f32();
 
-        let model = glm::identity();
+        // The model matrix carries zoom and pan. The shader skips it for screen-space UI.
+        let scaled = glm::scale(&glm::identity(), &glm::vec3(self.zoom, self.zoom, 1.0));
+        let model = glm::translate(&scaled, &glm::vec3(-self.view_offset.x, -self.view_offset.y, 0.0));
 
         let view = glm::translate(&glm::identity(), &glm::vec3(0.0, 0.0, -1.0));
 
+        // Project the grid rather than the swapchain so it fills the window at any size or DPI.
         let proj = glm::ortho_rh_zo(
             0.0,
-            self.data.swapchain_extent.width as f32,
+            WIDTH as f32,
             0.0,
-            self.data.swapchain_extent.height as f32,
+            HEIGHT as f32,
             0.001, // This sets the depth range from [0, 1] to [-1, 1].
             10.0,
         );
@@ -762,7 +985,7 @@ impl App {
         self.device.cmd_draw_indexed(
             command_buffer,
             INDICES.len() as u32,
-            self.num_active_particles as u32,
+            self.num_instances as u32,
             0,
             0,
             0,
@@ -1473,7 +1696,8 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
         .depth_test_enable(true)
         .depth_write_enable(true)
-        .depth_compare_op(vk::CompareOp::LESS)
+        // Everything sits at z = 0; LESS_OR_EQUAL lets later instances (button fills, text) draw on top.
+        .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
         .depth_bounds_test_enable(false)
         .stencil_test_enable(false);
 
@@ -2461,6 +2685,41 @@ unsafe fn begin_single_time_commands(device: &Device, data: &AppData) -> Result<
     device.begin_command_buffer(command_buffer, &info)?;
 
     Ok(command_buffer)
+}
+
+fn in_sim_bounds(x: usize, y: usize) -> bool {
+    x >= 1 && x <= WIDTH - 2 && y >= TOOLBAR_HEIGHT && y <= HEIGHT - 2
+}
+
+fn button_x(index: usize) -> usize {
+    BUTTON_MARGIN + index * (BUTTON_WIDTH + BUTTON_MARGIN)
+}
+
+/// Packs a color index, a screen-space flag and a rectangle size into one instance word. The
+/// vertex shader unpacks it, which lets the UI reuse the particle pipeline without another
+/// buffer. Particles leave the size bits at zero, which the shader treats as 1x1. Screen-space
+/// instances ignore zoom and pan.
+fn pack_instance(color: u32, width: u32, height: u32, screen_space: bool) -> u32 {
+    color | ((screen_space as u32) << 7) | (width << 8) | (height << 20)
+}
+
+/// 3x5 bitmap glyphs, one row per entry, most significant of the three bits on the left.
+/// Only the letters the toolbar labels use.
+fn glyph(c: char) -> [u8; 5] {
+    match c {
+        'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
+        'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
+        'E' => [0b111, 0b100, 0b110, 0b100, 0b111],
+        'G' => [0b011, 0b100, 0b101, 0b101, 0b011],
+        'L' => [0b100, 0b100, 0b100, 0b100, 0b111],
+        'M' => [0b101, 0b111, 0b111, 0b101, 0b101],
+        'N' => [0b110, 0b101, 0b101, 0b101, 0b101],
+        'R' => [0b110, 0b101, 0b110, 0b101, 0b101],
+        'S' => [0b011, 0b100, 0b010, 0b001, 0b110],
+        'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
+        'W' => [0b101, 0b101, 0b111, 0b111, 0b101],
+        _ => [0; 5],
+    }
 }
 
 #[repr(u32)]
