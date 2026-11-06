@@ -6,12 +6,16 @@
 //! [`Game`], and asks the [`Renderer`] to draw. The interesting parts live in:
 //!
 //! * `game.rs`   – controls, the brush, pausing, ticking the simulation.
+//! * `toolbar.rs` – the clickable material buttons above the world.
+//! * `camera.rs` – zoom and pan.
 //! * `sim/`      – the world grid, the materials, and the physics rules.
 //! * `render/`   – Vulkan code that draws a grid of colours to the window.
 
+mod camera;
 mod game;
 mod render;
 mod sim;
+mod toolbar;
 mod viewport;
 
 use std::time::{Duration, Instant};
@@ -48,13 +52,14 @@ fn main() -> Result<()> {
         .with_title("SandGears")
         .with_inner_size(LogicalSize::new(
             WORLD_WIDTH * PIXELS_PER_CELL,
-            WORLD_HEIGHT * PIXELS_PER_CELL,
+            (WORLD_HEIGHT + toolbar::HEIGHT as u32) * PIXELS_PER_CELL,
         ))
         .with_window_icon(load_icon())
         .build(&event_loop)?;
 
-    let world_size = (WORLD_WIDTH, WORLD_HEIGHT);
-    let mut renderer = Some(Renderer::new(&window, world_size)?);
+    // The renderer draws a grid of colours; ours is the toolbar stacked on the world view.
+    let display_size = (WORLD_WIDTH, WORLD_HEIGHT + toolbar::HEIGHT as u32);
+    let mut renderer = Some(Renderer::new(&window, display_size)?);
     let mut game = Game::new(World::new(WORLD_WIDTH as usize, WORLD_HEIGHT as usize));
     let mut fps = FpsCounter::new();
     let mut minimized = false;
@@ -77,7 +82,7 @@ fn main() -> Result<()> {
                     game.set_cursor(Some(cursor_to_cell(
                         position,
                         window.inner_size(),
-                        world_size,
+                        display_size,
                     )));
                 }
                 WindowEvent::CursorLeft { .. } => game.set_cursor(None),
@@ -86,13 +91,20 @@ fn main() -> Result<()> {
                     game.mouse_button(button, state == ElementState::Pressed);
                 }
 
-                WindowEvent::MouseWheel { delta, .. } => {
-                    let amount = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => y,
-                        MouseScrollDelta::PixelDelta(position) => position.y as f32,
-                    };
-                    game.scroll(amount.signum() as i32);
-                }
+                // A mouse wheel zooms. A trackpad's two-finger scroll pans and its pinch
+                // zooms, matching how macOS apps usually treat the two.
+                WindowEvent::MouseWheel { delta, .. } => match delta {
+                    MouseScrollDelta::LineDelta(_, y) => game.zoom(1.1_f32.powf(y)),
+                    MouseScrollDelta::PixelDelta(d) => {
+                        let viewport = Viewport::fit(
+                            (window.inner_size().width, window.inner_size().height),
+                            display_size,
+                        );
+                        let cells_per_pixel = display_size.0 as f32 / viewport.width;
+                        game.pan((-d.x as f32 * cells_per_pixel, -d.y as f32 * cells_per_pixel));
+                    }
+                },
+                WindowEvent::TouchpadMagnify { delta, .. } => game.zoom(1.0 + delta as f32),
 
                 WindowEvent::KeyboardInput {
                     input:

@@ -26,9 +26,13 @@ Shaders are compiled automatically during the build, so the Vulkan SDK is **not*
 | Input                    | Action                                    |
 |--------------------------|-------------------------------------------|
 | Left mouse (hold)        | Paint the selected element                |
+| Left click on toolbar    | Select an element                         |
 | Right mouse (hold)       | Erase                                     |
 | `1` `2` `3` `4` `5`      | Sand / Water / Gas / Metal / Eraser       |
-| Mouse wheel, `[` and `]` | Shrink / grow the brush                   |
+| `[` and `]`              | Shrink / grow the brush                   |
+| Mouse wheel, pinch       | Zoom in / out at the mouse                |
+| Middle drag, two-finger scroll | Pan while zoomed in                 |
+| `0`                      | Reset zoom                                |
 | `Space`                  | Pause / resume                            |
 | `.`                      | Advance one tick while paused             |
 | `C`                      | Clear the world                           |
@@ -44,6 +48,8 @@ shaders/            GLSL: one full-screen triangle that colours each pixel by it
 src/
   main.rs           Opens the window and runs the event loop
   game.rs           Controls, brush, pause, fixed 60 Hz simulation ticks
+  toolbar.rs        Clickable material buttons drawn above the world
+  camera.rs         Zoom and pan
   viewport.rs       Fits the world into the window (shared by drawing and mouse input)
   sim/
     element.rs      Materials and their properties (density, colour, behaviour)
