@@ -377,7 +377,10 @@ impl App {
     fn brush_origin(&self) -> (isize, isize) {
         let mouse = self.mouse_world();
         let half = (BRUSH_SIZE / 2) as isize;
-        (mouse.x.floor() as isize - half, mouse.y.floor() as isize - half)
+        (
+            mouse.x.floor() as isize - half,
+            mouse.y.floor() as isize - half,
+        )
     }
 
     /// Outlines the cells the brush will paint. Rebuilt every frame since it follows the mouse.
@@ -385,7 +388,10 @@ impl App {
         self.cursor_positions.clear();
         self.cursor_types.clear();
 
-        if !self.cursor_in_window || (self.mouse_position.y as usize) < TOOLBAR_HEIGHT || self.is_panning {
+        if !self.cursor_in_window
+            || (self.mouse_position.y as usize) < TOOLBAR_HEIGHT
+            || self.is_panning
+        {
             return;
         }
 
@@ -403,7 +409,8 @@ impl App {
         for (ex, ey, w, h) in edges {
             self.cursor_positions.push(ex);
             self.cursor_positions.push(ey);
-            self.cursor_types.push(pack_instance(UI_COLOR_SELECTED, w, h, false));
+            self.cursor_types
+                .push(pack_instance(UI_COLOR_SELECTED, w, h, false));
         }
     }
 
@@ -446,7 +453,13 @@ impl App {
 
             // Later instances draw over earlier ones, so the highlight goes first as a frame.
             if *p_type == self.current_type {
-                self.push_rect(button_x - 2, button_y - 2, BUTTON_WIDTH + 4, BUTTON_HEIGHT + 4, UI_COLOR_SELECTED);
+                self.push_rect(
+                    button_x - 2,
+                    button_y - 2,
+                    BUTTON_WIDTH + 4,
+                    BUTTON_HEIGHT + 4,
+                    UI_COLOR_SELECTED,
+                );
             }
 
             let (fill, text) = match p_type {
@@ -482,7 +495,8 @@ impl App {
     fn push_rect(&mut self, x: usize, y: usize, width: usize, height: usize, color: u32) {
         self.ui_positions.push(x as f32);
         self.ui_positions.push(y as f32);
-        self.ui_types.push(pack_instance(color, width as u32, height as u32, true));
+        self.ui_types
+            .push(pack_instance(color, width as u32, height as u32, true));
     }
 
     /// Renders a frame for our Vulkan app.
@@ -834,7 +848,11 @@ impl App {
         )?;
 
         let positions: *mut f32 = positions.cast();
-        std::ptr::copy_nonoverlapping(self.active_particle_positions.as_ptr(), positions, num_particles * 2);
+        std::ptr::copy_nonoverlapping(
+            self.active_particle_positions.as_ptr(),
+            positions,
+            num_particles * 2,
+        );
         std::ptr::copy_nonoverlapping(
             self.cursor_positions.as_ptr(),
             positions.add(num_particles * 2),
@@ -858,7 +876,11 @@ impl App {
 
         let types: *mut u32 = types.cast();
         std::ptr::copy_nonoverlapping(self.active_particle_types.as_ptr(), types, num_particles);
-        std::ptr::copy_nonoverlapping(self.cursor_types.as_ptr(), types.add(num_particles), num_cursor);
+        std::ptr::copy_nonoverlapping(
+            self.cursor_types.as_ptr(),
+            types.add(num_particles),
+            num_cursor,
+        );
         std::ptr::copy_nonoverlapping(
             self.ui_types.as_ptr(),
             types.add(num_particles + num_cursor),
@@ -879,7 +901,10 @@ impl App {
 
         // The model matrix carries zoom and pan. The shader skips it for screen-space UI.
         let scaled = glm::scale(&glm::identity(), &glm::vec3(self.zoom, self.zoom, 1.0));
-        let model = glm::translate(&scaled, &glm::vec3(-self.view_offset.x, -self.view_offset.y, 0.0));
+        let model = glm::translate(
+            &scaled,
+            &glm::vec3(-self.view_offset.x, -self.view_offset.y, 0.0),
+        );
 
         let view = glm::translate(&glm::identity(), &glm::vec3(0.0, 0.0, -1.0));
 
